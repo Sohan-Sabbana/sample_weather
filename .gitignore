@@ -1,0 +1,12 @@
+target/
+logs/
+*.log
+*.json.gz
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+.app.pid
+.DS_Store

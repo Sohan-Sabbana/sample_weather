@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration scan="false">
+
+    <springProperty name="appName" source="spring.application.name" defaultValue="weather-api"/>
+    <springProperty name="appVersion" source="app.version" defaultValue="dev"/>
+    <springProperty name="logDir" source="log.file.path" defaultValue="./logs"/>
+    <springProperty name="logName" source="log.file.name" defaultValue="weather-api.json"/>
+
+    <!-- Pretty console for local dev / Jenkins build log readability -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId:-}/%X{spanId:-}] [%X{pipelineStage:-runtime}] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- JSON file appender. This is what Filebeat / Logstash ships to Elasticsearch. -->
+    <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${logDir}/${logName}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${logDir}/archive/${logName}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>14</maxHistory>
+            <totalSizeCap>2GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <includeMdcKeyName>pipelineStage</includeMdcKeyName>
+            <customFields>{"service":"${appName}","version":"${appVersion}","env":"${ENV:-local}","build":"${BUILD_NUMBER:-local}"}</customFields>
+            <fieldNames>
+                <timestamp>@timestamp</timestamp>
+                <message>message</message>
+                <thread>thread</thread>
+                <logger>logger</logger>
+                <level>level</level>
+            </fieldNames>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="JSON_FILE"/>
+    </root>
+</configuration>

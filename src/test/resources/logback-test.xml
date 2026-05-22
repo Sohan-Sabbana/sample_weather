@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <property name="LOG_DIR" value="${LOG_DIR:-./logs}"/>
+    <property name="SUITE" value="${test.stage:-test}"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}/%X{spanId:-}] [%X{pipelineStage:-test}] %logger{32} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/tests-${SUITE}.json</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/archive/tests-${SUITE}.%d{yyyy-MM-dd}.json.gz</fileNamePattern>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <includeMdcKeyName>pipelineStage</includeMdcKeyName>
+            <includeMdcKeyName>testRunId</includeMdcKeyName>
+            <includeMdcKeyName>testName</includeMdcKeyName>
+            <customFields>{"service":"weather-api-tests","env":"${ENV:-local}","build":"${BUILD_NUMBER:-local}","suite":"${SUITE}"}</customFields>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="JSON_FILE"/>
+    </root>
+</configuration>
