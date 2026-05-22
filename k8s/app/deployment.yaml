@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weather-api
+  namespace: weather
+  labels:
+    app: weather-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: weather-api
+  template:
+    metadata:
+      labels:
+        app: weather-api
+        # Filebeat uses these labels to enrich every log line with k8s metadata
+        # so you can search Kibana by app/version too.
+      annotations:
+        co.elastic.logs/enabled: "true"
+        co.elastic.logs/json.keys_under_root: "true"
+        co.elastic.logs/json.add_error_key: "true"
+        co.elastic.logs/json.overwrite_keys: "true"
+    spec:
+      containers:
+        - name: weather-api
+          # IMAGE_PLACEHOLDER is rewritten by the Jenkins pipeline using sed.
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "k8s"
+            - name: ENV
+              value: "ci"
+            - name: BUILD_NUMBER
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['build']
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi

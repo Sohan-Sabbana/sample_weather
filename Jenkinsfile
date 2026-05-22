@@ -8,16 +8,21 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
+    parameters {
+        string(name: 'DOCKERHUB_USER', defaultValue: 'sohansabbana',
+               description: 'Your Docker Hub username (also the image namespace).')
+    }
+
     environment {
-        // A single id that identifies this entire pipeline run. Every JSON log
-        // line (app + tests) emitted during this build will carry it, so the
-        // CD log analyzer can pull the full picture from Elasticsearch with:
-        //     service:weather-api* AND build:"${BUILD_NUMBER}"
+        IMAGE_NAME   = "${params.DOCKERHUB_USER}/weather-api"
+        IMAGE_TAG    = "${env.BUILD_NUMBER}"
+        IMAGE        = "${IMAGE_NAME}:${IMAGE_TAG}"
         RUN_ID       = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
-        APP_PORT     = "8080"
-        APP_BASE_URL = "http://localhost:8080"
+        APP_BASE_URL = "http://host.docker.internal:30080"
+        ES_URL       = "http://host.docker.internal:30200"
         LOG_DIR      = "${env.WORKSPACE}/logs"
         ENV          = "ci"
+        KUBE_NS      = "weather"
     }
 
     stages {
@@ -31,7 +36,7 @@ pipeline {
 
         stage('Build') {
             steps {
-                echo "[stage=build run=${RUN_ID}] building artifact"
+                echo "[stage=build run=${RUN_ID}] mvn package"
                 sh 'mvn -B -ntp clean package -DskipTests'
             }
             post {
@@ -41,28 +46,49 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Docker build & push') {
             steps {
-                echo "[stage=deploy run=${RUN_ID}] starting app on port ${APP_PORT}"
-                sh '''
-                    set -e
-                    pkill -f weather-api.jar || true
-                    nohup java \
-                        -DLOG_DIR="$LOG_DIR" \
-                        -DENV="$ENV" \
-                        -DBUILD_NUMBER="$BUILD_NUMBER" \
-                        -Dserver.port="$APP_PORT" \
-                        -jar target/weather-api.jar > "$LOG_DIR/app-stdout.log" 2>&1 &
-                    echo $! > .app.pid
+                echo "[stage=docker run=${RUN_ID}] building ${IMAGE}"
+                withCredentials([usernamePassword(credentialsId: 'dockerhub',
+                                                  usernameVariable: 'DH_USER',
+                                                  passwordVariable: 'DH_PASS')]) {
+                    sh '''
+                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+                        docker build -t "$IMAGE" -t "$IMAGE_NAME:latest" .
+                        docker push "$IMAGE"
+                        docker push "$IMAGE_NAME:latest"
+                    '''
+                }
+            }
+        }
 
-                    echo "Waiting for /api/health ..."
+        stage('Deploy to Kubernetes') {
+            steps {
+                echo "[stage=deploy run=${RUN_ID}] kubectl apply -> ${KUBE_NS}"
+                sh '''
+                    kubectl apply -f k8s/00-namespaces.yaml
+                    # Substitute image into the Deployment manifest
+                    sed "s|IMAGE_PLACEHOLDER|$IMAGE|g" k8s/app/deployment.yaml | kubectl apply -f -
+                    kubectl apply -f k8s/app/service.yaml
+
+                    # Force a rollout if image tag is the same (e.g. re-build of latest)
+                    kubectl -n "$KUBE_NS" rollout restart deployment/weather-api
+                    kubectl -n "$KUBE_NS" rollout status  deployment/weather-api --timeout=180s
+                '''
+            }
+        }
+
+        stage('Wait for endpoint') {
+            steps {
+                sh '''
+                    echo "Waiting for $APP_BASE_URL/api/health ..."
                     for i in $(seq 1 60); do
                         if curl -fsS "$APP_BASE_URL/api/health" >/dev/null; then
-                            echo "App is up after ${i}s"; exit 0
+                            echo "App is reachable after ${i}s"; exit 0
                         fi
-                        sleep 1
+                        sleep 2
                     done
-                    echo "App failed to start within 60s"; tail -n 200 "$LOG_DIR/app-stdout.log"; exit 1
+                    echo "App not reachable"; kubectl -n "$KUBE_NS" get pods; exit 1
                 '''
             }
         }
@@ -83,6 +109,7 @@ pipeline {
             post {
                 always {
                     junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
+                    sh 'bash scripts/ship-test-logs-to-es.sh "$LOG_DIR/tests-mat.json" mat || true'
                 }
             }
         }
@@ -103,6 +130,7 @@ pipeline {
             post {
                 always {
                     junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
+                    sh 'bash scripts/ship-test-logs-to-es.sh "$LOG_DIR/tests-regression.json" regression || true'
                 }
             }
         }
@@ -110,16 +138,15 @@ pipeline {
 
     post {
         always {
-            echo "[stage=teardown run=${RUN_ID}] stopping app and archiving logs"
+            echo "[stage=teardown run=${RUN_ID}] archiving logs and showing pod status"
             sh '''
-                if [ -f .app.pid ]; then
-                    kill $(cat .app.pid) || true
-                    rm -f .app.pid
-                fi
+                kubectl -n "$KUBE_NS" get pods -o wide || true
+                kubectl -n "$KUBE_NS" logs -l app=weather-api --tail=50 || true
             '''
-            // Archive raw JSON logs so the CD log analyzer can pick them up
-            // (or your Filebeat sidecar can ship them straight to Elasticsearch).
             archiveArtifacts artifacts: 'logs/**/*.json, logs/**/*.log', allowEmptyArchive: true, fingerprint: true
+        }
+        success {
+            echo "Build succeeded. View pod logs in Kibana: http://localhost:30601 (index pattern: weather-logs-*)"
         }
     }
 }

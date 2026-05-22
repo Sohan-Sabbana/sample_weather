@@ -1,19 +1,37 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration scan="false">
 
-    <springProperty name="appName" source="spring.application.name" defaultValue="weather-api"/>
-    <springProperty name="appVersion" source="app.version" defaultValue="dev"/>
-    <springProperty name="logDir" source="log.file.path" defaultValue="./logs"/>
-    <springProperty name="logName" source="log.file.name" defaultValue="weather-api.json"/>
+    <springProperty name="appName"   source="spring.application.name" defaultValue="weather-api"/>
+    <springProperty name="appVersion" source="app.version"           defaultValue="dev"/>
+    <springProperty name="logDir"    source="log.file.path"          defaultValue="./logs"/>
+    <springProperty name="logName"   source="log.file.name"          defaultValue="weather-api.json"/>
 
-    <!-- Pretty console for local dev / Jenkins build log readability -->
-    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <!-- ============================================================
+         JSON encoder reused by stdout (k8s) and file (local) appenders
+         Fields are exactly what Filebeat/Logstash will ship to ES.
+         ============================================================ -->
+    <appender name="STDOUT_JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <includeMdcKeyName>pipelineStage</includeMdcKeyName>
+            <customFields>{"service":"${appName}","version":"${appVersion}","env":"${ENV:-local}","build":"${BUILD_NUMBER:-local}"}</customFields>
+            <fieldNames>
+                <timestamp>@timestamp</timestamp>
+                <message>message</message>
+                <thread>thread</thread>
+                <logger>logger</logger>
+                <level>level</level>
+            </fieldNames>
+        </encoder>
+    </appender>
+
+    <appender name="STDOUT_PRETTY" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId:-}/%X{spanId:-}] [%X{pipelineStage:-runtime}] %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <!-- JSON file appender. This is what Filebeat / Logstash ships to Elasticsearch. -->
     <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${logDir}/${logName}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
@@ -37,8 +55,19 @@
         </encoder>
     </appender>
 
-    <root level="INFO">
-        <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="JSON_FILE"/>
-    </root>
+    <!-- Inside Kubernetes: write JSON to stdout only.
+         Filebeat tails /var/log/containers/*.log and ships to Elasticsearch. -->
+    <springProfile name="k8s">
+        <root level="INFO">
+            <appender-ref ref="STDOUT_JSON"/>
+        </root>
+    </springProfile>
+
+    <!-- Local / Jenkins-host dev: pretty stdout + JSON file. -->
+    <springProfile name="!k8s">
+        <root level="INFO">
+            <appender-ref ref="STDOUT_PRETTY"/>
+            <appender-ref ref="JSON_FILE"/>
+        </root>
+    </springProfile>
 </configuration>

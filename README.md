@@ -1,200 +1,250 @@
-# weather-api — sample app for the Jenkins CD log-analyzer
+# weather-api — sample app + Jenkins CD pipeline with Elasticsearch logging
 
-A small Spring Boot Weather API used as the deployable artifact for the CD
-log-analyzer pipeline. It exists so you have:
+A small Spring Boot Weather API used as the deployable artifact for a CD
+log-analyzer pipeline. End-to-end you get:
 
-- A real service to **build**, **deploy**, **MAT**-test and **regression**-test in Jenkins.
-- Endpoints to hit from TestNG, so each pipeline stage emits meaningful logs.
-- Structured JSON logs carrying a **trace id** end-to-end so the analyzer can
-  pull the whole story from Elasticsearch with a single query.
+1. Code in this repo, built and tested by Jenkins.
+2. Container image pushed to Docker Hub.
+3. App deployed as pods to Docker Desktop Kubernetes.
+4. Pod stdout (JSON) shipped to Elasticsearch by a Filebeat DaemonSet.
+5. MAT + Regression test suites run from Jenkins against the deployed pods.
+6. Test JVM logs bulk-uploaded to Elasticsearch too.
+7. Single `traceId` per test joins server-side and test-side logs in Kibana.
+
+```
+                              ┌────────────────────────┐
+                              │  Docker Desktop K8s     │
+                              │  ┌──────────────────┐   │
+                              │  │ weather-api pods │ ──┼─── stdout (JSON)
+                              │  └──────────────────┘   │           │
+                              │  ┌──────────────────┐   │           ▼
+                              │  │ filebeat daemon  │ ──┼──> Elasticsearch ──> Kibana
+                              │  └──────────────────┘   │     (in-cluster)    :30601
+                              │  ┌──────────────────┐   │      :30200
+                              │  │ elasticsearch +  │   │           ▲
+                              │  │ kibana           │   │           │
+                              │  └──────────────────┘   │       _bulk
+                              └────────────────────────┘           │
+                                                                   │
+                                                  ┌────────────────┘
+                                                  │
+                          ┌───────────────────────┴───────────┐
+                          │  Jenkins (container on this host) │
+                          │  build -> docker push ->          │
+                          │  kubectl apply -> wait ->         │
+                          │  MAT -> Regression ->             │
+                          │  ship test logs to ES             │
+                          └───────────────────────────────────┘
+```
 
 ---
 
-## 1. What's in the box
+## 0. Prerequisites
 
-```
-weather-api/
-├── pom.xml
-├── Jenkinsfile                      <-- Build / Deploy / MAT / Regression
-├── Dockerfile                       <-- optional container deploy
-├── testng-mat.xml                   <-- MAT suite
-├── testng-regression.xml            <-- Regression suite
-├── src/main/java/com/example/weather/
-│   ├── WeatherApiApplication.java
-│   ├── config/
-│   │   ├── OpenApiConfig.java       <-- Swagger metadata
-│   │   └── TraceIdFilter.java       <-- reads/issues X-Trace-Id -> MDC
-│   ├── controller/                  <-- 14 REST endpoints
-│   ├── service/                     <-- in-memory store + seeded data
-│   ├── model/                       <-- City, WeatherReading, Forecast, Alert
-│   └── exception/                   <-- 404/400 handlers
-├── src/main/resources/
-│   ├── application.yml
-│   └── logback-spring.xml           <-- JSON logs -> Elasticsearch-ready
-└── src/test/java/com/example/weather/tests/
-    ├── BaseApiTest.java             <-- generates per-test trace ids
-    ├── mat/MatSmokeTests.java
-    └── regression/{City,Weather,Alert}RegressionTests.java
+- Docker Desktop with Kubernetes **enabled** (Settings -> Kubernetes -> Enable).
+- A Docker Hub account.
+- Git, Maven, JDK 17 (only needed if you want to run the app locally outside k8s).
+
+Verify your cluster:
+```powershell
+kubectl config use-context docker-desktop
+kubectl get nodes
 ```
 
-## 2. Endpoints (14)
+---
 
-Swagger UI: `http://localhost:8080/swagger-ui.html`
-OpenAPI JSON: `http://localhost:8080/v3/api-docs`
+## 1. One-time setup: deploy the logging stack
 
-| # | Method | Path                              | Purpose                          |
-|---|--------|-----------------------------------|----------------------------------|
-| 1 | GET    | `/api/cities`                     | list all cities                  |
-| 2 | GET    | `/api/cities/{id}`                | get city by id                   |
-| 3 | POST   | `/api/cities`                     | create city                      |
-| 4 | PUT    | `/api/cities/{id}`                | update city                      |
-| 5 | DELETE | `/api/cities/{id}`                | delete city                      |
-| 6 | GET    | `/api/weather/current/{city}`     | current weather                  |
-| 7 | GET    | `/api/weather/forecast/{city}`    | n-day forecast (`?days=`)        |
-| 8 | GET    | `/api/weather/history/{city}`     | n-day history (`?days=`)         |
-| 9 | GET    | `/api/alerts`                     | list alerts                      |
-|10 | GET    | `/api/alerts/{id}`                | get alert                        |
-|11 | POST   | `/api/alerts`                     | raise alert                      |
-|12 | DELETE | `/api/alerts/{id}`                | delete alert                     |
-|13 | GET    | `/api/health`                     | health probe (used by deploy)    |
-|14 | GET    | `/api/version`                    | deployed version                 |
-
-## 3. Run locally
-
-```bash
-mvn clean package -DskipTests
-java -jar target/weather-api.jar
-# then open http://localhost:8080/swagger-ui.html
+```powershell
+cd C:\Users\sohansa\cd-log-analyzer-sample-api
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-logging.ps1
 ```
 
-Run the suites against it:
+This installs into your cluster:
+- `logging/elasticsearch` (single-node, NodePort 30200)
+- `logging/kibana`         (NodePort 30601)
+- `logging/filebeat`       (DaemonSet, ships pod logs to ES)
 
-```bash
-# Minimum Acceptance Tests
-mvn -Pmat test -Dapi.base.url=http://localhost:8080 -Dtest.stage=mat
+Wait until both pods are `Ready`, then open Kibana:
+**http://localhost:30601** → Stack Management → Index Patterns → create
+- `weather-logs-*`       (pod logs)
+- `weather-logs-test-*`  (test JVM logs)
 
-# Full regression
-mvn -Pregression test -Dapi.base.url=http://localhost:8080 -Dtest.stage=regression
+---
+
+## 2. One-time setup: Jenkins container
+
+This builds and runs a Jenkins image that already has `docker`, `kubectl`,
+`maven`, `git`, `jq`, `curl` — and a kubeconfig pointing at your Docker
+Desktop cluster.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\jenkins\run-jenkins.ps1
 ```
 
-Both produce JSON logs under `target/logs/`.
+The script prints the **initial admin password**. Open
+**http://localhost:8080**, install the suggested plugins (the Jenkinsfile
+needs `git`, `pipeline`, `junit`, `ansicolor`, `timestamper`, `credentials-binding`).
 
-## 4. The trace-id flow (the heart of the log analyzer)
-
-```
-  ┌─────────────────┐       X-Trace-Id: abc123        ┌──────────────────┐
-  │  TestNG test    │ ──────────────────────────────▶ │ Spring Boot app  │
-  │  (MAT/Reg)      │                                 │ TraceIdFilter    │
-  │  BaseApiTest    │                                 │  puts traceId    │
-  │  generates UUID │                                 │  in Logback MDC  │
-  └────────┬────────┘                                 └────────┬─────────┘
-           │                                                   │
-           ▼                                                   ▼
-  tests-<stage>.json                                  weather-api.json
-  (traceId, testName, suite, build)                   (traceId, level, logger, build)
-           │                                                   │
-           └───────────────────┬───────────────────────────────┘
-                               ▼
-                    Filebeat / Logstash
-                               │
-                               ▼
-                       Elasticsearch index
-                  weather-api-logs-YYYY.MM.DD
-                               │
-                               ▼
-        Query in Kibana / your CD log-analyzer service:
-        traceId:"abc123"   →   every log line for that one API call
-        build:"42" AND pipelineStage:"regression"
-                          →   every regression-stage line for build #42
+Verify everything from inside the container:
+```powershell
+docker exec jenkins kubectl get nodes
+docker exec jenkins docker version
 ```
 
-Every log line — server-side and test-side — is JSON and contains:
+---
 
-```json
-{
-  "@timestamp": "2026-05-21T09:11:23.812Z",
-  "level": "INFO",
-  "logger": "com.example.weather.service.WeatherService",
-  "message": "Current weather city=Bengaluru temp=27.4C conditions='Sunny'",
-  "traceId": "abc123-...",
-  "spanId": "9f12...",
-  "pipelineStage": "regression",
-  "service": "weather-api",
-  "version": "1.0.0",
-  "env": "ci",
-  "build": "42"
-}
-```
+## 3. One-time setup: Jenkins credentials
 
-That means your CD log analyzer only needs to know the trace id (or
-`build` + `pipelineStage`) to reconstruct the full causal chain of a
-failure in Elasticsearch.
+In Jenkins: **Manage Jenkins → Credentials → System → Global → Add Credentials**
 
-## 5. The Jenkins pipeline
+| ID         | Kind                          | Notes                                              |
+|------------|-------------------------------|----------------------------------------------------|
+| `dockerhub`| Username with password        | Docker Hub username + Personal Access Token        |
+| `github`   | Username with password        | GitHub username + PAT (for SCM checkout if private)|
 
-`Jenkinsfile` ships with four stages and a teardown:
+Use a Docker Hub PAT (Account Settings → Security → Access Tokens),
+not your password.
 
-1. **Build** — `mvn clean package -DskipTests`, archives the jar.
-2. **Deploy** — starts the jar with `LOG_DIR`, `BUILD_NUMBER`, `ENV` set; waits
-   for `/api/health` to return `UP`.
-3. **MAT** — `mvn -Pmat test` against the deployed instance. One quick happy
-   path per critical endpoint. Fails the build fast.
-4. **Regression** — `mvn -Pregression test`, full sweep across cities,
-   weather, alerts and validation paths.
-5. **post.always** — stops the app and archives `logs/**` so the analyzer
-   (or Filebeat) can pick everything up.
+---
 
-Every stage echoes `[stage=... run=...]` on stdout for the Jenkins build log
-itself, while the JVMs write structured JSON to `logs/`.
+## 4. One-time setup: create the pipeline
 
-## 6. Wiring logs into Elasticsearch
+Dashboard → New Item → name it `weather-api` → **Pipeline** → OK.
 
-You have two clean options. Pick whichever fits your infra:
+- Pipeline → Definition: **Pipeline script from SCM**
+- SCM: Git
+- Repo URL: `https://github.com/Sohan-Sabbana/sample_weather.git`
+- Credentials: `github` (skip if the repo is public)
+- Branch: `*/main`
+- Script Path: `Jenkinsfile`
+- Save.
 
-### Option A — Filebeat on the Jenkins agent
+When you click **Build with Parameters**, set `DOCKERHUB_USER` to your
+Docker Hub username (default is the placeholder in the file).
 
-Point Filebeat at `${LOG_DIR}/*.json`:
+---
 
-```yaml
-filebeat.inputs:
-  - type: log
-    paths: [ "/var/jenkins_home/workspace/*/logs/*.json" ]
-    json.keys_under_root: true
-    json.add_error_key: true
-output.elasticsearch:
-  hosts: ["http://elasticsearch:9200"]
-  index: "weather-api-logs-%{+yyyy.MM.dd}"
-```
+## 5. Run the pipeline
 
-Because the encoder already writes one JSON object per line with all the
-right fields, no Logstash parsing is required.
+The Jenkinsfile runs these stages:
 
-### Option B — Direct from Logback
+| Stage              | What happens                                                       |
+|--------------------|--------------------------------------------------------------------|
+| Checkout           | clones the repo                                                    |
+| Build              | `mvn clean package -DskipTests`                                    |
+| Docker build & push| `docker build` + `docker push <DOCKERHUB_USER>/weather-api:<BUILD>` |
+| Deploy to k8s      | `kubectl apply` namespaces, deployment (with image substituted), service, then `rollout restart` + `rollout status` |
+| Wait for endpoint  | polls `http://host.docker.internal:30080/api/health`               |
+| MAT                | TestNG smoke suite vs the deployed pods                            |
+| Regression         | full TestNG regression suite                                       |
+| Post (always)      | dumps pod logs, archives `logs/**`, ships test logs to ES          |
 
-Add a `LogstashTcpSocketAppender` in `logback-spring.xml` pointing at
-Logstash. Keep the file appender too so Jenkins still archives a copy.
-
-## 7. Useful Kibana / Elasticsearch queries for the analyzer
+After a successful run, in Kibana → Discover:
 
 ```
-# every log line from one failing test
+# everything for this build (server pods + test JVM)
+build:"42"
+
+# every log line from one specific test
 traceId:"abc123-..."
-
-# everything regression printed on build 42
-build:"42" AND pipelineStage:"regression"
 
 # only server-side errors in this build
 service:"weather-api" AND level:"ERROR" AND build:"42"
 
-# correlate a failed MAT test with its server-side stacktrace
+# correlate a failing test with the server stacktrace it triggered
 testName:"healthIsUp" AND build:"42"
 ```
 
-## 8. Extending it
+---
 
-- Add new endpoints under `controller/` — the filter, logging and Swagger
-  pick them up automatically.
-- Add a new TestNG class under `tests/regression/` and reference it from
-  `testng-regression.xml`. The base class already gives you a trace id.
-- Tag stages by passing a different `-Dtest.stage=...` value in the
-  Jenkinsfile (e.g. `perf`, `security`) and your analyzer can filter on it.
+## 6. Project layout
+
+```
+weather-api/
+├── pom.xml
+├── Jenkinsfile                          <-- build/push/deploy/test/ship
+├── Dockerfile                           <-- multi-stage, non-root, stdout JSON
+├── testng-mat.xml                       <-- MAT suite
+├── testng-regression.xml                <-- Regression suite
+├── src/main/java/com/example/weather/
+│   ├── WeatherApiApplication.java
+│   ├── config/
+│   │   ├── OpenApiConfig.java
+│   │   └── TraceIdFilter.java           <-- X-Trace-Id -> MDC -> log JSON
+│   ├── controller/                      <-- 14 REST endpoints
+│   ├── service/
+│   ├── model/
+│   └── exception/
+├── src/main/resources/
+│   ├── application.yml
+│   └── logback-spring.xml               <-- 'k8s' profile = stdout JSON
+├── src/test/java/com/example/weather/tests/
+│   ├── BaseApiTest.java                 <-- per-test traceId, talks to /api/...
+│   ├── mat/MatSmokeTests.java
+│   └── regression/{City,Weather,Alert}RegressionTests.java
+├── src/test/resources/logback-test.xml
+├── k8s/
+│   ├── 00-namespaces.yaml
+│   ├── app/
+│   │   ├── deployment.yaml              <-- IMAGE_PLACEHOLDER, probes, labels
+│   │   └── service.yaml                 <-- NodePort 30080
+│   └── logging/
+│       ├── elasticsearch.yaml           <-- single-node, NodePort 30200
+│       ├── kibana.yaml                  <-- NodePort 30601
+│       └── filebeat.yaml                <-- DaemonSet + RBAC + autodiscover
+└── scripts/
+    ├── setup-logging.ps1                <-- installs ES + Kibana + Filebeat
+    ├── ship-test-logs-to-es.sh          <-- bulk POST test logs to ES
+    └── jenkins/
+        ├── Dockerfile.jenkins           <-- Jenkins + docker + kubectl + mvn
+        └── run-jenkins.ps1              <-- builds & runs the Jenkins container
+```
+
+---
+
+## 7. Run the app outside Kubernetes (local dev)
+
+```powershell
+mvn clean package -DskipTests
+java -jar target/weather-api.jar
+# Swagger UI: http://localhost:8080/swagger-ui.html
+```
+
+Without the `k8s` profile, the app uses pretty stdout + `logs/weather-api.json`.
+
+Run the tests against it:
+```powershell
+mvn -Pmat        test "-Dapi.base.url=http://localhost:8080" "-Dtest.stage=mat"
+mvn -Pregression test "-Dapi.base.url=http://localhost:8080" "-Dtest.stage=regression"
+```
+
+---
+
+## 8. Troubleshooting
+
+### "No static resource ." 500 on http://localhost:8080
+The weather-api is running and you hit `/`. It has no controller for `/`. Use:
+`/swagger-ui.html`, `/api/health`, `/api/cities`, etc.
+
+### Jenkins container can't reach the cluster
+From inside the container: `kubectl get nodes`. If it fails with x509 errors,
+re-run `scripts/jenkins/run-jenkins.ps1` — it rewrites the kubeconfig server
+URL to `https://host.docker.internal:6443`.
+
+### Filebeat shipping nothing
+`kubectl -n logging logs ds/filebeat | head -50`. Common causes:
+- Elasticsearch not ready (check `kubectl -n logging get pods`).
+- Your pods don't have `co.elastic.logs/enabled: "true"` annotation — the
+  weather-api Deployment in this repo does set it.
+
+### App pod CrashLoopBackOff
+`kubectl -n weather logs deploy/weather-api`. Usually image pull or memory
+limit too low.
+
+### Index pattern is empty in Kibana
+Wait 30s after first deploy. Then check directly:
+```powershell
+curl http://localhost:30200/_cat/indices?v
+```
+You should see `weather-logs-YYYY.MM.DD`.
