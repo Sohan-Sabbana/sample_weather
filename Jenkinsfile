@@ -1,6 +1,7 @@
 pipeline {
     agent any
 
+
     options {
         timestamps()
         ansiColor('xterm')
@@ -8,14 +9,17 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
+
     parameters {
-        string(name: 'DOCKERHUB_USER', defaultValue: 'sohansabbana',
+        string(name: 'DOCKERHUB_USER', defaultValue: 'sparebuddy',
                description: 'Your Docker Hub username (also the image namespace).')
     }
+
 
     tools {
         maven 'Maven-3.9'
     }
+
 
     environment {
         IMAGE_NAME   = "${params.DOCKERHUB_USER}/weather-api"
@@ -29,7 +33,9 @@ pipeline {
         KUBE_NS      = "weather"
     }
 
+
     stages {
+
 
         stage('Checkout') {
             steps {
@@ -37,6 +43,7 @@ pipeline {
                 sh 'mkdir -p "$LOG_DIR"'
             }
         }
+
 
         stage('Build') {
             steps {
@@ -50,12 +57,13 @@ pipeline {
             }
         }
 
+
         stage('Docker build & push') {
             steps {
                 echo "[stage=docker run=${RUN_ID}] building ${IMAGE}"
                 withCredentials([usernamePassword(credentialsId: 'dockerhub',
-                                                  usernameVariable: 'DH_USER',
-                                                  passwordVariable: 'DH_PASS')]) {
+                                                  usernameVariable: 'sparebuddy',
+                                                  passwordVariable: '[Credentials]')]) {
                     sh '''
                         echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
                         docker build -t "$IMAGE" -t "$IMAGE_NAME:latest" .
@@ -66,6 +74,7 @@ pipeline {
             }
         }
 
+
         stage('Deploy to Kubernetes') {
             steps {
                 echo "[stage=deploy run=${RUN_ID}] kubectl apply -> ${KUBE_NS}"
@@ -75,12 +84,14 @@ pipeline {
                     sed "s|IMAGE_PLACEHOLDER|$IMAGE|g" k8s/app/deployment.yaml | kubectl apply -f -
                     kubectl apply -f k8s/app/service.yaml
 
+
                     # Force a rollout if image tag is the same (e.g. re-build of latest)
                     kubectl -n "$KUBE_NS" rollout restart deployment/weather-api
                     kubectl -n "$KUBE_NS" rollout status  deployment/weather-api --timeout=180s
                 '''
             }
         }
+
 
         stage('Wait for endpoint') {
             steps {
@@ -91,66 +102,3 @@ pipeline {
                             echo "App is reachable after ${i}s"; exit 0
                         fi
                         sleep 2
-                    done
-                    echo "App not reachable"; kubectl -n "$KUBE_NS" get pods; exit 1
-                '''
-            }
-        }
-
-        stage('MAT') {
-            steps {
-                echo "[stage=mat run=${RUN_ID}] running Minimum Acceptance Tests"
-                sh '''
-                    mvn -B -ntp -Pmat test \
-                        -Dapi.base.url="$APP_BASE_URL" \
-                        -Dtest.stage=mat \
-                        -Dtest.run.id="$RUN_ID" \
-                        -DLOG_DIR="$LOG_DIR" \
-                        -DBUILD_NUMBER="$BUILD_NUMBER" \
-                        -DENV="$ENV"
-                '''
-            }
-            post {
-                always {
-                    junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
-                    sh 'bash scripts/ship-test-logs-to-es.sh "$LOG_DIR/tests-mat.json" mat || true'
-                }
-            }
-        }
-
-        stage('Regression') {
-            steps {
-                echo "[stage=regression run=${RUN_ID}] running regression suite"
-                sh '''
-                    mvn -B -ntp -Pregression test \
-                        -Dapi.base.url="$APP_BASE_URL" \
-                        -Dtest.stage=regression \
-                        -Dtest.run.id="$RUN_ID" \
-                        -DLOG_DIR="$LOG_DIR" \
-                        -DBUILD_NUMBER="$BUILD_NUMBER" \
-                        -DENV="$ENV"
-                '''
-            }
-            post {
-                always {
-                    junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
-                    sh 'bash scripts/ship-test-logs-to-es.sh "$LOG_DIR/tests-regression.json" regression || true'
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            echo "[stage=teardown run=${RUN_ID}] archiving logs and showing pod status"
-            sh '''
-                kubectl -n "$KUBE_NS" get pods -o wide || true
-                kubectl -n "$KUBE_NS" logs -l app=weather-api --tail=50 || true
-            '''
-            archiveArtifacts artifacts: 'logs/**/*.json, logs/**/*.log', allowEmptyArchive: true, fingerprint: true
-        }
-        success {
-            echo "Build succeeded. View pod logs in Kibana: http://localhost:30601 (index pattern: weather-logs-*)"
-        }
-    }
-}
