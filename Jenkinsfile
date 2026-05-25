@@ -54,15 +54,19 @@ pipeline {
 
         stage('Docker build & push') {
             steps {
-                echo "[stage=docker run=${RUN_ID}] building ${IMAGE}"
                 withCredentials([usernamePassword(credentialsId: 'dockerhub',
                                                   usernameVariable: 'DH_USER',
                                                   passwordVariable: 'DH_PASS')]) {
                     sh '''
+                        # Image namespace must match the logged-in Docker Hub user.
+                        export IMAGE_NAME="${DH_USER}/weather-api"
+                        export IMAGE="${IMAGE_NAME}:${BUILD_NUMBER}"
+                        echo "[stage=docker run=${RUN_ID}] building ${IMAGE}"
                         echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
                         docker build -t "$IMAGE" -t "$IMAGE_NAME:latest" .
                         docker push "$IMAGE"
                         docker push "$IMAGE_NAME:latest"
+                        echo "$IMAGE" > pushed-image.txt
                     '''
                 }
             }
@@ -72,6 +76,7 @@ pipeline {
             steps {
                 echo "[stage=deploy run=${RUN_ID}] kubectl apply -> ${KUBE_NS}"
                 sh '''
+                    IMAGE="$(cat pushed-image.txt)"
                     kubectl apply -f k8s/00-namespaces.yaml
                     sed "s|IMAGE_PLACEHOLDER|$IMAGE|g" k8s/app/deployment.yaml | kubectl apply -f -
                     kubectl apply -f k8s/app/service.yaml
