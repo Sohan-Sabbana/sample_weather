@@ -13,13 +13,17 @@ pipeline {
                description: 'Your Docker Hub username (also the image namespace).')
     }
 
+    tools {
+        maven 'Maven-3.9'
+    }
+
     environment {
         IMAGE_NAME   = "${params.DOCKERHUB_USER}/weather-api"
         IMAGE_TAG    = "${env.BUILD_NUMBER}"
         IMAGE        = "${IMAGE_NAME}:${IMAGE_TAG}"
         RUN_ID       = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
         APP_BASE_URL = "http://host.docker.internal:30080"
-        ES_URL       = "http://host.docker.internal:30200"
+        ES_URL       = "http://host.docker.internal:9200"
         LOG_DIR      = "${env.WORKSPACE}/logs"
         ENV          = "ci"
         KUBE_NS      = "weather"
