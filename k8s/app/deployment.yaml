@@ -6,7 +6,8 @@ metadata:
   labels:
     app: weather-api
 spec:
-  replicas: 2
+  # In-memory stores are not shared across pods; use 1 replica for CI/regression tests.
+  replicas: 1
   selector:
     matchLabels:
       app: weather-api
