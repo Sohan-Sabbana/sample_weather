@@ -13,19 +13,33 @@ if [ ! -f "$MAT" ] && [ ! -f "$REG" ]; then
   exit 0
 fi
 
+read -r -d '' CSS <<'EOF' || true
+body{font-family:Segoe UI,system-ui,sans-serif;margin:1.5rem 2rem;color:#1a1a1a}
+h1{font-size:1.5rem;border-bottom:2px solid #333;padding-bottom:.5rem}
+h2{margin-top:2rem;border-bottom:1px solid #666;padding-bottom:.35rem}
+.flow-table{border-collapse:collapse;width:100%;margin-top:1rem;border:2px solid #333}
+.flow-table th,.flow-table td{border:1px solid #333;padding:.6rem .85rem;text-align:left;vertical-align:top}
+.flow-table th{background:#e8e8e8;font-weight:600}
+.flow-table tr.pass td{background:#f6fff8}
+.flow-table tr.fail td{background:#fff5f5}
+.flow-table tr.skip td{background:#fffef0}
+.flow-link{font-weight:600;color:#0b5fff}
+.trace code{font-size:.8rem;word-break:break-all}
+.meta{color:#444;font-size:.9rem}
+EOF
+
 {
   echo '<!DOCTYPE html><html><head><meta charset="utf-8"/>'
   echo '<title>Flow Execution Report (combined)</title>'
-  echo '<style>body{font-family:system-ui,sans-serif;margin:1.5rem}'
-  echo 'h2{margin-top:2rem;border-top:1px solid #ccc;padding-top:1rem}</style></head><body>'
+  echo "<style>${CSS}</style></head><body>"
   echo '<h1>Flow Execution Report — combined</h1>'
   if [ -f "$MAT" ]; then
     echo '<h2>MAT</h2>'
-    sed -n '/<table>/,/<\/table>/p' "$MAT"
+    sed -n '/<table class="flow-table">/,/<\/table>/p' "$MAT"
   fi
   if [ -f "$REG" ]; then
     echo '<h2>Regression</h2>'
-    sed -n '/<table>/,/<\/table>/p' "$REG"
+    sed -n '/<table class="flow-table">/,/<\/table>/p' "$REG"
   fi
   echo '</body></html>'
 } > "$OUT"

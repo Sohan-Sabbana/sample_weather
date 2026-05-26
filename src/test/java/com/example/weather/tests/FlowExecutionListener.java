@@ -1,5 +1,9 @@
 package com.example.weather.tests;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.core.OutputStreamAppender;
+import org.slf4j.LoggerFactory;
 import org.testng.IInvokedMethod;
 import org.testng.IInvokedMethodListener;
 import org.testng.ITestResult;
@@ -17,14 +21,15 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
- * After each suite, writes a Flow Execution Report (HTML + JSON) under {@code LOG_DIR}.
- * Each TestNG test method is treated as one flow; the flow name links to a per-flow
- * log extract that Jenkins archives as a build artifact.
+ * Writes a Flow Execution Report (HTML + JSON) under {@code LOG_DIR}.
+ * Each TestNG test method is one flow; flow name links to extracted JSON logs.
  */
 public class FlowExecutionListener implements ISuiteListener, IInvokedMethodListener {
 
+    private static final Pattern TRACE_ID_JSON = Pattern.compile("\"traceId\"\\s*:\\s*\"([^\"]+)\"");
     private static final List<FlowRecord> FLOWS = Collections.synchronizedList(new ArrayList<>());
 
     @Override
@@ -37,11 +42,23 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         if (!method.isTestMethod()) {
             return;
         }
-        String traceId = (String) result.getAttribute("traceId");
-        if (traceId == null) {
-            traceId = "unknown";
+        String traceId = resolveTraceId(result);
+        String flowName = result.getMethod().getMethodName();
+        FlowRecord record = FlowRecord.from(result, traceId);
+
+        try {
+            flushJsonLogFile();
+            Path base = Paths.get(System.getProperty("LOG_DIR", "logs"));
+            Path flowsDir = base.resolve("flows");
+            Files.createDirectories(flowsDir);
+            Path flowLog = flowsDir.resolve(record.logFileName());
+            String stage = System.getProperty("test.stage", "test");
+            Path jsonLog = base.resolve("tests-" + stage + ".json");
+            extractTraceLog(jsonLog, traceId, flowName, flowLog);
+            FLOWS.add(record.withLogPath("flows/" + record.logFileName()));
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to extract flow log for " + flowName, e);
         }
-        FLOWS.add(FlowRecord.from(result, traceId));
     }
 
     @Override
@@ -58,54 +75,109 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         }
     }
 
+    private static String resolveTraceId(ITestResult result) {
+        String traceId = BaseApiTest.currentTraceIdForListener();
+        if (traceId == null || traceId.isBlank()) {
+            Object attr = result.getAttribute("traceId");
+            if (attr instanceof String s && !s.isBlank()) {
+                traceId = s;
+            }
+        }
+        if (traceId == null || traceId.isBlank()) {
+            traceId = "unknown";
+        }
+        return traceId;
+    }
+
+    private static void flushJsonLogFile() throws IOException {
+        if (!(LoggerFactory.getILoggerFactory() instanceof LoggerContext context)) {
+            return;
+        }
+        Logger root = context.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        var appender = root.getAppender("JSON_FILE");
+        if (appender instanceof OutputStreamAppender<?> streamAppender) {
+            var os = streamAppender.getOutputStream();
+            if (os != null) {
+                os.flush();
+            }
+        }
+    }
+
     private void writeReports() throws IOException {
         String stage = System.getProperty("test.stage", "test");
         String logDir = System.getProperty("LOG_DIR", "logs");
         String runId = System.getProperty("test.run.id", "local");
         String build = System.getProperty("BUILD_NUMBER", "local");
 
-        Path base = Paths.get(logDir);
-        Path flowsDir = base.resolve("flows");
-        Files.createDirectories(flowsDir);
-
-        Path jsonLog = base.resolve("tests-" + stage + ".json");
-        for (int i = 0; i < FLOWS.size(); i++) {
-            FlowRecord flow = FLOWS.get(i);
-            Path flowLog = flowsDir.resolve(flow.logFileName());
-            extractTraceLog(jsonLog, flow.traceId(), flowLog);
-            FLOWS.set(i, flow.withLogPath("flows/" + flow.logFileName()));
-        }
-
         FLOWS.sort(Comparator.comparing(FlowRecord::flowName));
 
+        Path base = Paths.get(logDir);
         Path jsonOut = base.resolve("flow-execution-report-" + stage + ".json");
         Path htmlOut = base.resolve("flow-execution-report-" + stage + ".html");
         Files.writeString(jsonOut, toJson(stage, runId, build), StandardCharsets.UTF_8);
         Files.writeString(htmlOut, toHtml(stage, runId, build), StandardCharsets.UTF_8);
-
-        // Stable name for Jenkins publishHTML / artifact link
         Files.writeString(base.resolve("flow-execution-report.html"), Files.readString(htmlOut), StandardCharsets.UTF_8);
     }
 
-    private static void extractTraceLog(Path jsonLog, String traceId, Path out) throws IOException {
+    private static void extractTraceLog(Path jsonLog, String traceId, String testName, Path out)
+            throws IOException {
         if (!Files.isRegularFile(jsonLog)) {
-            Files.writeString(out, "No suite log file at " + jsonLog + "\n", StandardCharsets.UTF_8);
+            Files.writeString(out,
+                    "No suite log file at " + jsonLog + " (tests may not have written JSON yet).\n",
+                    StandardCharsets.UTF_8);
             return;
         }
-        String needle = "\"traceId\":\"" + traceId + "\"";
+
+        boolean matchByTrace = traceId != null && !"unknown".equalsIgnoreCase(traceId);
+        String traceNeedle = matchByTrace ? "\"traceId\":\"" + traceId + "\"" : null;
+        String testNeedle = "\"testName\":\"" + testName + "\"";
+
+        StringBuilder sb = new StringBuilder();
         try (BufferedReader reader = Files.newBufferedReader(jsonLog, StandardCharsets.UTF_8)) {
-            StringBuilder sb = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
-                if (line.contains(needle)) {
-                    sb.append(line).append('\n');
+                if (line.isBlank()) {
+                    continue;
+                }
+                boolean match = false;
+                if (matchByTrace && line.contains(traceNeedle)) {
+                    match = true;
+                } else if (!matchByTrace && line.contains(testNeedle)) {
+                    match = true;
+                }
+                if (match) {
+                    sb.append(formatLogLine(line)).append('\n');
                 }
             }
-            if (sb.isEmpty()) {
-                sb.append("No log lines matched traceId=").append(traceId).append('\n');
-            }
-            Files.writeString(out, sb.toString(), StandardCharsets.UTF_8);
         }
+
+        if (sb.isEmpty()) {
+            sb.append("# No lines matched\n");
+            sb.append("traceId=").append(traceId).append('\n');
+            sb.append("testName=").append(testName).append('\n');
+            sb.append("logFile=").append(jsonLog).append('\n');
+        }
+        Files.writeString(out, sb.toString(), StandardCharsets.UTF_8);
+    }
+
+    /** Pretty-print one JSON log line for the flow log artifact. */
+    private static String formatLogLine(String line) {
+        var m = TRACE_ID_JSON.matcher(line);
+        if (m.find()) {
+            return line;
+        }
+        return line;
+    }
+
+    private static String logHref(String logPath) {
+        String base = System.getProperty("flow.report.base", "").trim();
+        if (base.isEmpty()) {
+            return logPath;
+        }
+        if (!base.endsWith("/")) {
+            base = base + "/";
+        }
+        return base + logPath;
     }
 
     private static String toJson(String stage, String runId, String build) {
@@ -152,19 +224,13 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         int failed = (int) FLOWS.stream().filter(f -> f.failed > 0).count();
         int skipped = (int) FLOWS.stream().filter(f -> f.skipped > 0).count();
 
-        String kibanaBase = System.getProperty("kibana.url", "http://localhost:5601");
+        String kibanaBase = System.getProperty("kibana.url", "http://localhost:5601").replaceAll("/$", "");
 
         StringBuilder sb = new StringBuilder();
         sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>");
         sb.append("<title>Flow Execution Report — ").append(escape(stage)).append("</title>");
         sb.append("<style>");
-        sb.append("body{font-family:system-ui,sans-serif;margin:1.5rem;color:#1a1a1a}");
-        sb.append("h1{font-size:1.4rem}table{border-collapse:collapse;width:100%;margin-top:1rem}");
-        sb.append("th,td{border:1px solid #ccc;padding:.5rem .75rem;text-align:left}");
-        sb.append("th{background:#f4f4f4}tr.fail td{background:#fff0f0}");
-        sb.append("tr.skip td{background:#fffbe6}a{color:#0b5fff}");
-        sb.append(".meta{color:#555;font-size:.9rem;margin-bottom:1rem}");
-        sb.append(".pass{color:#0a7a2f}.fail{color:#b00020}.skip{color:#8a6d00}");
+        sb.append(CSS);
         sb.append("</style></head><body>");
         sb.append("<h1>Flow Execution Report</h1>");
         sb.append("<p class=\"meta\">Stage: <b>").append(escape(stage)).append("</b> · ");
@@ -174,36 +240,65 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         sb.append("<span class=\"pass\">Passed ").append(passed).append("</span> · ");
         sb.append("<span class=\"fail\">Failed ").append(failed).append("</span> · ");
         sb.append("<span class=\"skip\">Skipped ").append(skipped).append("</span></p>");
-        sb.append("<table><thead><tr>");
-        sb.append("<th>Flow Name</th><th>Total Tests</th><th>Passed</th><th>Failed</th><th>Skipped</th>");
-        sb.append("<th>Trace</th></tr></thead><tbody>");
+        sb.append("<table class=\"flow-table\"><thead><tr>");
+        sb.append("<th>Flow Name</th><th>Trace ID</th><th>Total</th><th>Passed</th><th>Failed</th>");
+        sb.append("<th>Skipped</th><th>Logs</th></tr></thead><tbody>");
 
         for (FlowRecord f : FLOWS) {
-            String rowClass = f.failed > 0 ? "fail" : (f.skipped > 0 ? "skip" : "");
+            String rowClass = f.failed > 0 ? "fail" : (f.skipped > 0 ? "skip" : "pass");
+            String href = escape(logHref(f.logPath));
             sb.append("<tr class=\"").append(rowClass).append("\">");
-            sb.append("<td><a href=\"").append(escape(f.logPath)).append("\" title=\"Flow logs\">");
+            sb.append("<td><a class=\"flow-link\" href=\"").append(href).append("\">");
             sb.append(escape(f.flowName)).append("</a></td>");
+            sb.append("<td class=\"trace\"><code>").append(escape(f.traceId)).append("</code></td>");
             sb.append("<td>1</td><td>").append(f.passed).append("</td>");
             sb.append("<td>").append(f.failed).append("</td><td>").append(f.skipped).append("</td>");
-            sb.append("<td><a href=\"").append(escape(f.logPath)).append("\">logs</a> · ");
-            sb.append("<a href=\"").append(kibanaDiscoverUrl(kibanaBase, f.traceId));
-            sb.append("\" target=\"_blank\" rel=\"noopener\">Kibana</a></td>");
-            sb.append("</tr>");
+            sb.append("<td><a href=\"").append(href).append("\">view logs</a>");
+            if (!"unknown".equalsIgnoreCase(f.traceId)) {
+                sb.append(" · <a href=\"").append(escape(kibanaDiscoverUrl(kibanaBase, f.traceId, build)));
+                sb.append("\" target=\"_blank\" rel=\"noopener\">Kibana</a>");
+            }
+            sb.append("</td></tr>");
         }
 
         sb.append("</tbody></table>");
-        sb.append("<p class=\"meta\">Open a flow name to view JSON log lines for that test (same traceId in Elasticsearch).</p>");
+        sb.append("<p class=\"meta\">Flow name opens JSON log lines for that test. ");
+        sb.append("Kibana uses your default data view — create patterns <code>weather-logs-test-*</code> ");
+        sb.append("and <code>weather-logs-*</code> if needed.</p>");
         sb.append("</body></html>");
         return sb.toString();
     }
 
-    private static String kibanaDiscoverUrl(String kibanaBase, String traceId) {
-        // Discover deep-link (Kibana 8.x) filtered on traceId in test + server indices
-        String q = "traceId:\"" + traceId + "\"";
-        return kibanaBase + "/app/discover#/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-7d,to:now))"
-                + "&_a=(columns:!(message,level,flow,testName),filters:!(),query:(language:kuery,query:'"
-                + q.replace("'", "\\'") + "'),index:weather-logs-test-*)";
+    /**
+     * Kibana 8 Discover link (no hard-coded data view id — uses the user's default view).
+     */
+    private static String kibanaDiscoverUrl(String kibanaBase, String traceId, String build) {
+        StringBuilder kql = new StringBuilder();
+        if (build != null && !build.isBlank() && !"local".equals(build)) {
+            kql.append("build:\"").append(build).append("\" AND ");
+        }
+        kql.append("traceId:\"").append(traceId).append("\"");
+        String q = kql.toString().replace("'", "\\'");
+        return kibanaBase + "/app/discover#/?_g=(time:(from:now-7d,to:now))&_a=(query:(language:kuery,query:'"
+                + q + "'))";
     }
+
+    private static final String CSS = """
+            body{font-family:Segoe UI,system-ui,sans-serif;margin:1.5rem 2rem;color:#1a1a1a}
+            h1{font-size:1.5rem;border-bottom:2px solid #333;padding-bottom:.5rem}
+            .flow-table{border-collapse:collapse;width:100%;margin-top:1rem;border:2px solid #333}
+            .flow-table th,.flow-table td{border:1px solid #333;padding:.6rem .85rem;text-align:left;vertical-align:top}
+            .flow-table th{background:#e8e8e8;font-weight:600}
+            .flow-table tr.pass td{background:#f6fff8}
+            .flow-table tr.fail td{background:#fff5f5}
+            .flow-table tr.skip td{background:#fffef0}
+            .flow-table tr:hover td{background:#f0f7ff}
+            .flow-link{font-weight:600;color:#0b5fff;text-decoration:none}
+            .flow-link:hover{text-decoration:underline}
+            .trace code{font-size:.8rem;word-break:break-all}
+            .meta{color:#444;font-size:.9rem;margin:.75rem 0}
+            .pass{color:#0a7a2f;font-weight:600}.fail{color:#b00020;font-weight:600}.skip{color:#8a6d00;font-weight:600}
+            """;
 
     private static String escape(String s) {
         if (s == null) {
@@ -252,8 +347,14 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         }
 
         String logFileName() {
-            String shortId = traceId.length() > 8 ? traceId.substring(0, 8) : traceId;
-            return flowName + "-" + shortId + ".log";
+            String safeTrace = traceId.replaceAll("[^a-zA-Z0-9-]", "");
+            if (safeTrace.length() > 8) {
+                safeTrace = safeTrace.substring(0, 8);
+            }
+            if (safeTrace.isEmpty()) {
+                safeTrace = "notrace";
+            }
+            return flowName + "-" + safeTrace + ".log";
         }
 
         FlowRecord withLogPath(String path) {

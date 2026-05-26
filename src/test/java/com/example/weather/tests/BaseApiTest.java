@@ -27,7 +27,14 @@ import java.util.UUID;
  */
 public class BaseApiTest {
 
+    /** Set per test thread; used by {@link FlowExecutionListener} when TestNG result attrs are missing. */
+    static final ThreadLocal<String> CURRENT_TRACE_ID = new ThreadLocal<>();
+
     private static final Logger log = LoggerFactory.getLogger(BaseApiTest.class);
+
+    static String currentTraceIdForListener() {
+        return CURRENT_TRACE_ID.get();
+    }
 
     protected static final String STAGE = System.getProperty("test.stage", "test");
     protected static final String RUN_ID = System.getProperty("test.run.id",
@@ -46,6 +53,7 @@ public class BaseApiTest {
     @BeforeMethod(alwaysRun = true)
     public void beforeEachTest(java.lang.reflect.Method method) {
         currentTraceId = UUID.randomUUID().toString();
+        CURRENT_TRACE_ID.set(currentTraceId);
         MDC.put("traceId", currentTraceId);
         MDC.put("pipelineStage", STAGE);
         MDC.put("testRunId", RUN_ID);
@@ -69,6 +77,7 @@ public class BaseApiTest {
 
     @AfterMethod(alwaysRun = true)
     public void afterEachTest(ITestResult result) {
+        result.setAttribute("traceId", currentTraceId);
         String outcome = switch (result.getStatus()) {
             case ITestResult.SUCCESS -> "PASS";
             case ITestResult.FAILURE -> "FAIL";
@@ -84,6 +93,7 @@ public class BaseApiTest {
                     result.getMethod().getMethodName(), outcome, currentTraceId);
         }
         MDC.clear();
+        CURRENT_TRACE_ID.remove();
     }
 
     protected String currentTraceId() {

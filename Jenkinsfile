@@ -111,7 +111,8 @@ pipeline {
                         -Dtest.run.id="$RUN_ID" \
                         -DLOG_DIR="$LOG_DIR" \
                         -DBUILD_NUMBER="$BUILD_NUMBER" \
-                        -DENV="$ENV"
+                        -DENV="$ENV" \
+                        -Dkibana.url=http://localhost:5601
                 '''
             }
             post {
@@ -133,7 +134,8 @@ pipeline {
                         -Dtest.run.id="$RUN_ID" \
                         -DLOG_DIR="$LOG_DIR" \
                         -DBUILD_NUMBER="$BUILD_NUMBER" \
-                        -DENV="$ENV"
+                        -DENV="$ENV" \
+                        -Dkibana.url=http://localhost:5601
                 '''
             }
             post {
@@ -152,14 +154,14 @@ pipeline {
             sh '''
                 kubectl -n "$KUBE_NS" get pods -o wide || true
                 kubectl -n "$KUBE_NS" logs -l app=weather-api --tail=50 || true
-                bash scripts/merge-flow-reports.sh || true
+                bash scripts/prepare-flow-report-for-jenkins.sh || true
             '''
-            archiveArtifacts artifacts: 'logs/**/*.json, logs/**/*.log, logs/flow-execution-report*.html, logs/flows/**', allowEmptyArchive: true, fingerprint: true
+            archiveArtifacts artifacts: 'logs/**/*.json, logs/**/*.log, logs/flow-execution-report*.html, logs/flows/**, logs/flow-report/**', allowEmptyArchive: true, fingerprint: true
             publishHTML(target: [
                 allowMissing: true,
                 alwaysLinkToLastBuild: true,
                 keepAll: true,
-                reportDir: 'logs',
+                reportDir: 'logs/flow-report',
                 reportFiles: 'flow-execution-report.html',
                 reportName: 'Flow Execution Report',
                 reportTitles: 'Flow Execution Report'
