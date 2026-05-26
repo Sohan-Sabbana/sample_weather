@@ -50,6 +50,10 @@ public class BaseApiTest {
         MDC.put("pipelineStage", STAGE);
         MDC.put("testRunId", RUN_ID);
         MDC.put("testName", method.getName());
+        var testResult = org.testng.Reporter.getCurrentTestResult();
+        if (testResult != null) {
+            testResult.setAttribute("traceId", currentTraceId);
+        }
 
         spec = new RequestSpecBuilder()
                 .addHeader("X-Trace-Id", currentTraceId)
@@ -84,5 +88,10 @@ public class BaseApiTest {
 
     protected String currentTraceId() {
         return currentTraceId;
+    }
+
+    /** Opens a named sub-flow; logs and requests carry {@code X-Flow} for Kibana correlation. */
+    protected Flow flow(String name) {
+        return new Flow(name, spec);
     }
 }

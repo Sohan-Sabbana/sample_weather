@@ -22,6 +22,7 @@
             <includeMdcKeyName>pipelineStage</includeMdcKeyName>
             <includeMdcKeyName>testRunId</includeMdcKeyName>
             <includeMdcKeyName>testName</includeMdcKeyName>
+            <includeMdcKeyName>flow</includeMdcKeyName>
             <customFields>{"service":"weather-api-tests","env":"${ENV:-local}","build":"${BUILD_NUMBER:-local}","suite":"${SUITE}"}</customFields>
         </encoder>
     </appender>
