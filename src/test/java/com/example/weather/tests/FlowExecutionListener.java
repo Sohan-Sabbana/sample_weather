@@ -241,63 +241,108 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         sb.append("<span class=\"fail\">Failed ").append(failed).append("</span> · ");
         sb.append("<span class=\"skip\">Skipped ").append(skipped).append("</span></p>");
         sb.append("<table class=\"flow-table\"><thead><tr>");
-        sb.append("<th>Flow Name</th><th>Trace ID</th><th>Total</th><th>Passed</th><th>Failed</th>");
-        sb.append("<th>Skipped</th><th>Logs</th></tr></thead><tbody>");
+        sb.append("<th>Flow Name</th><th>Status</th><th>Trace ID</th><th>Total</th>");
+        sb.append("<th>Passed</th><th>Failed</th><th>Skipped</th><th>Logs</th></tr></thead><tbody>");
 
         for (FlowRecord f : FLOWS) {
             String rowClass = f.failed > 0 ? "fail" : (f.skipped > 0 ? "skip" : "pass");
-            String href = escape(logHref(f.logPath));
+            String href = htmlHrefAttr(logHref(f.logPath));
+            String kibanaUrl = htmlHrefAttr(kibanaDiscoverUrl(kibanaBase, f.traceId, build));
+            String kqlHint = escape(kibanaKql(f.traceId, build));
+
             sb.append("<tr class=\"").append(rowClass).append("\">");
-            sb.append("<td><a class=\"flow-link\" href=\"").append(href).append("\">");
+            sb.append("<td class=\"flow-name\"><a class=\"flow-link\" href=\"").append(href).append("\">");
             sb.append(escape(f.flowName)).append("</a></td>");
+            sb.append("<td>").append(statusBadge(f)).append("</td>");
             sb.append("<td class=\"trace\"><code>").append(escape(f.traceId)).append("</code></td>");
-            sb.append("<td>1</td><td>").append(f.passed).append("</td>");
-            sb.append("<td>").append(f.failed).append("</td><td>").append(f.skipped).append("</td>");
-            sb.append("<td><a href=\"").append(href).append("\">view logs</a>");
+            sb.append("<td class=\"num\">1</td>");
+            sb.append(resultCell(f.passed, "pass"));
+            sb.append(resultCell(f.failed, "fail"));
+            sb.append(resultCell(f.skipped, "skip"));
+            sb.append("<td class=\"actions\">");
+            sb.append("<a class=\"action-link\" href=\"").append(href).append("\">view logs</a>");
             if (!"unknown".equalsIgnoreCase(f.traceId)) {
-                sb.append(" · <a href=\"").append(escape(kibanaDiscoverUrl(kibanaBase, f.traceId, build)));
-                sb.append("\" target=\"_blank\" rel=\"noopener\">Kibana</a>");
+                sb.append(" <a class=\"action-link kibana-link\" href=\"").append(kibanaUrl);
+                sb.append("\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Kibana: ").append(kqlHint);
+                sb.append("\">Kibana</a>");
             }
             sb.append("</td></tr>");
         }
 
         sb.append("</tbody></table>");
-        sb.append("<p class=\"meta\">Flow name opens JSON log lines for that test. ");
-        sb.append("Kibana uses your default data view — create patterns <code>weather-logs-test-*</code> ");
-        sb.append("and <code>weather-logs-*</code> if needed.</p>");
+        sb.append("<p class=\"meta\">Flow name → JSON log extract. Kibana opens Discover with KQL: ");
+        sb.append("<code>traceId:&lt;uuid&gt;</code> (set default data view to <code>weather-logs-test-*</code> or ");
+        sb.append("<code>weather-logs-*</code>). Kibana URL: <code>").append(escape(kibanaBase)).append("</code></p>");
         sb.append("</body></html>");
         return sb.toString();
     }
 
     /**
-     * Kibana 8 Discover link (no hard-coded data view id — uses the user's default view).
+     * Kibana 8 Discover deep link. KQL uses unquoted values (no {@code "} in the URL) so the HTML
+     * {@code href} attribute is not truncated — that was why the link looked dead before.
      */
     private static String kibanaDiscoverUrl(String kibanaBase, String traceId, String build) {
+        String kql = kibanaKql(traceId, build);
+        return kibanaBase + "/app/discover#/?_g=(time:(from:now-7d,to:now))"
+                + "&_a=(query:(language:kuery,query:'" + kql + "'))";
+    }
+
+    private static String kibanaKql(String traceId, String build) {
         StringBuilder kql = new StringBuilder();
         if (build != null && !build.isBlank() && !"local".equals(build)) {
-            kql.append("build:\"").append(build).append("\" AND ");
+            kql.append("build:").append(build).append(" AND ");
         }
-        kql.append("traceId:\"").append(traceId).append("\"");
-        String q = kql.toString().replace("'", "\\'");
-        return kibanaBase + "/app/discover#/?_g=(time:(from:now-7d,to:now))&_a=(query:(language:kuery,query:'"
-                + q + "'))";
+        kql.append("traceId:").append(traceId);
+        return kql.toString();
+    }
+
+    /** HTML attribute value for href — encode & only; do NOT use text escape on URLs. */
+    private static String htmlHrefAttr(String url) {
+        return url.replace("&", "&amp;");
+    }
+
+    private static String statusBadge(FlowRecord f) {
+        if (f.failed > 0) {
+            return "<span class=\"badge badge-fail\">FAILED</span>";
+        }
+        if (f.skipped > 0) {
+            return "<span class=\"badge badge-skip\">SKIPPED</span>";
+        }
+        return "<span class=\"badge badge-pass\">PASSED</span>";
+    }
+
+    private static String resultCell(int value, String kind) {
+        if (value > 0) {
+            return "<td class=\"result-block block-" + kind + "\">" + value + "</td>";
+        }
+        return "<td class=\"result-block block-empty\">0</td>";
     }
 
     private static final String CSS = """
-            body{font-family:Segoe UI,system-ui,sans-serif;margin:1.5rem 2rem;color:#1a1a1a}
-            h1{font-size:1.5rem;border-bottom:2px solid #333;padding-bottom:.5rem}
-            .flow-table{border-collapse:collapse;width:100%;margin-top:1rem;border:2px solid #333}
-            .flow-table th,.flow-table td{border:1px solid #333;padding:.6rem .85rem;text-align:left;vertical-align:top}
-            .flow-table th{background:#e8e8e8;font-weight:600}
-            .flow-table tr.pass td{background:#f6fff8}
-            .flow-table tr.fail td{background:#fff5f5}
-            .flow-table tr.skip td{background:#fffef0}
-            .flow-table tr:hover td{background:#f0f7ff}
-            .flow-link{font-weight:600;color:#0b5fff;text-decoration:none}
-            .flow-link:hover{text-decoration:underline}
-            .trace code{font-size:.8rem;word-break:break-all}
+            body{font-family:Segoe UI,system-ui,sans-serif;margin:1.5rem 2rem;color:#1a1a1a;background:#fafafa}
+            h1{font-size:1.5rem;border-bottom:3px solid #222;padding-bottom:.5rem;margin-bottom:.5rem}
+            .flow-table{border-collapse:collapse;width:100%;margin-top:1rem;border:3px solid #222;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+            .flow-table th,.flow-table td{border:2px solid #444;padding:.65rem .9rem;text-align:center;vertical-align:middle}
+            .flow-table th{background:#d4d4d4;font-weight:700;color:#111}
+            .flow-table td.flow-name,.flow-table td.trace,.flow-table td.actions{text-align:left}
+            .flow-table tr.pass td.flow-name{background:#f0fdf4}
+            .flow-table tr.fail td.flow-name{background:#fef2f2}
+            .flow-table tr.skip td.flow-name{background:#fefce8}
+            .result-block{font-weight:700;font-size:1.05rem;min-width:3rem}
+            .block-pass{background:#16a34a!important;color:#fff!important;border:2px solid #14532d!important}
+            .block-fail{background:#dc2626!important;color:#fff!important;border:2px solid #7f1d1d!important}
+            .block-skip{background:#ca8a04!important;color:#fff!important;border:2px solid #713f12!important}
+            .block-empty{background:#f3f4f6;color:#9ca3af;border:2px solid #d1d5db!important}
+            .badge{display:inline-block;padding:.25rem .65rem;border-radius:4px;font-size:.75rem;font-weight:700;border:2px solid}
+            .badge-pass{background:#16a34a;color:#fff;border-color:#14532d}
+            .badge-fail{background:#dc2626;color:#fff;border-color:#7f1d1d}
+            .badge-skip{background:#ca8a04;color:#fff;border-color:#713f12}
+            .flow-link{font-weight:600;color:#1d4ed8;text-decoration:underline}
+            .action-link{color:#1d4ed8;text-decoration:underline;margin-right:.5rem}
+            .kibana-link{color:#7c3aed;font-weight:600}
+            .trace code{font-size:.78rem;word-break:break-all;background:#f3f4f6;padding:.15rem .35rem;border:1px solid #ccc}
             .meta{color:#444;font-size:.9rem;margin:.75rem 0}
-            .pass{color:#0a7a2f;font-weight:600}.fail{color:#b00020;font-weight:600}.skip{color:#8a6d00;font-weight:600}
+            .pass{color:#16a34a;font-weight:700}.fail{color:#dc2626;font-weight:700}.skip{color:#ca8a04;font-weight:700}
             """;
 
     private static String escape(String s) {
