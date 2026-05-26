@@ -1,3 +1,5 @@
+# DEPRECATED: use k8s/logging/fluent-bit.yaml instead.
+# Kept for reference only.
 ---
 apiVersion: v1
 kind: ServiceAccount

@@ -15,13 +15,10 @@ spec:
     metadata:
       labels:
         app: weather-api
-        # Filebeat uses these labels to enrich every log line with k8s metadata
-        # so you can search Kibana by app/version too.
+        # Fluent Bit DaemonSet (k8s/logging/fluent-bit.yaml) tails pods in namespace weather.
       annotations:
         co.elastic.logs/enabled: "true"
-        co.elastic.logs/json.keys_under_root: "true"
-        co.elastic.logs/json.add_error_key: "true"
-        co.elastic.logs/json.overwrite_keys: "true"
+        fluentbit.io/exclude: "false"
     spec:
       containers:
         - name: weather-api

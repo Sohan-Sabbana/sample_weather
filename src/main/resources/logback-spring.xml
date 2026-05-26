@@ -8,7 +8,7 @@
 
     <!-- ============================================================
          JSON encoder reused by stdout (k8s) and file (local) appenders
-         Fields are exactly what Filebeat/Logstash will ship to ES.
+         Fields are exactly what Fluent Bit ships to Elasticsearch.
          ============================================================ -->
     <appender name="STDOUT_JSON" class="ch.qos.logback.core.ConsoleAppender">
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
@@ -56,7 +56,7 @@
     </appender>
 
     <!-- Inside Kubernetes: write JSON to stdout only.
-         Filebeat tails /var/log/containers/*.log and ships to Elasticsearch. -->
+         Fluent Bit tails /var/log/containers/*.log and ships to Elasticsearch. -->
     <springProfile name="k8s">
         <root level="INFO">
             <appender-ref ref="STDOUT_JSON"/>
