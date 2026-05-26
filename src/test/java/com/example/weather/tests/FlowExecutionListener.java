@@ -229,18 +229,17 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         StringBuilder sb = new StringBuilder();
         sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>");
         sb.append("<title>Flow Execution Report — ").append(escape(stage)).append("</title>");
-        // Inline styles: Jenkins HTML Publisher often strips &lt;style&gt; blocks from published reports.
-        sb.append("<style>").append(CSS).append("</style></head><body");
-        sb.append(" style=\"font-family:Segoe UI,sans-serif;margin:24px;color:#111;background:#fafafa\">");
-        sb.append("<h1 style=\"border-bottom:3px solid #222;padding-bottom:8px\">Flow Execution Report</h1>");
-        sb.append("<p style=\"color:#444;font-size:14px\">Stage: <b>").append(escape(stage)).append("</b> · ");
-        sb.append("Run: <b>").append(escape(runId)).append("</b> · Build: <b>").append(escape(build)).append("</b></p>");
-        sb.append("<p style=\"color:#444;font-size:14px\">Summary: ");
-        sb.append("Total <b>").append(total).append("</b> · ");
-        sb.append("<span style=\"color:#16a34a;font-weight:bold\">Passed ").append(passed).append("</span> · ");
-        sb.append("<span style=\"color:#dc2626;font-weight:bold\">Failed ").append(failed).append("</span> · ");
-        sb.append("<span style=\"color:#ca8a04;font-weight:bold\">Skipped ").append(skipped).append("</span></p>");
-        sb.append("<table style=\"").append(TABLE_STYLE).append("\"><thead><tr>");
+        sb.append("</head><body>");
+        sb.append("<h2><b>Flow Execution Report</b></h2>");
+        sb.append("<p>Stage: <b>").append(escape(stage)).append("</b> &nbsp;|&nbsp; ");
+        sb.append("Run: <b>").append(escape(runId)).append("</b> &nbsp;|&nbsp; ");
+        sb.append("Build: <b>").append(escape(build)).append("</b></p>");
+        sb.append("<p>Summary: Total <b>").append(total).append("</b> &nbsp;|&nbsp; ");
+        sb.append("<font color=\"#16a34a\"><b>Passed ").append(passed).append("</b></font> &nbsp;|&nbsp; ");
+        sb.append("<font color=\"#dc2626\"><b>Failed ").append(failed).append("</b></font> &nbsp;|&nbsp; ");
+        sb.append("<font color=\"#ca8a04\"><b>Skipped ").append(skipped).append("</b></font></p>");
+        sb.append("<table border=\"1\" cellpadding=\"8\" cellspacing=\"0\" width=\"100%\">");
+        sb.append("<thead><tr bgcolor=\"#d4d4d4\">");
         sb.append(th("Flow Name"));
         sb.append(th("Status"));
         sb.append(th("Trace ID"));
@@ -255,35 +254,31 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
             String href = htmlHrefAttr(logHref(f.logPath));
             String kibanaUrl = htmlHrefAttr(kibanaDiscoverUrl(kibanaBase, f.traceId, build));
             String kqlHint = escape(kibanaKql(f.traceId, build));
-            String rowBg = f.failed > 0 ? "#fef2f2" : (f.skipped > 0 ? "#fefce8" : "#f0fdf4");
+            String rowBg = f.failed > 0 ? "#fef2f2" : (f.skipped > 0 ? "#fefce8" : "#ffffff");
 
-            sb.append("<tr style=\"background-color:").append(rowBg).append("\">");
-            sb.append("<td style=\"").append(TD_LEFT).append("\"><a href=\"").append(href);
-            sb.append("\" style=\"color:#1d4ed8;font-weight:bold;text-decoration:underline\">");
-            sb.append(escape(f.flowName)).append("</a></td>");
-            sb.append("<td style=\"").append(TD_CENTER).append("\">").append(statusBadge(f)).append("</td>");
-            sb.append("<td style=\"").append(TD_LEFT).append("\"><code style=\"font-size:12px\">");
-            sb.append(escape(f.traceId)).append("</code></td>");
-            sb.append("<td style=\"").append(TD_CENTER).append("\">1</td>");
+            sb.append("<tr bgcolor=\"").append(rowBg).append("\">");
+            sb.append("<td align=\"left\"><a href=\"").append(href).append("\"><b>");
+            sb.append(escape(f.flowName)).append("</b></a></td>");
+            sb.append(statusCell(f));
+            sb.append("<td align=\"left\"><font size=\"2\">").append(escape(f.traceId)).append("</font></td>");
+            sb.append("<td align=\"center\">1</td>");
             sb.append(resultCell(f.passed, "pass"));
             sb.append(resultCell(f.failed, "fail"));
             sb.append(resultCell(f.skipped, "skip"));
-            sb.append("<td style=\"").append(TD_LEFT).append("\">");
-            sb.append("<a href=\"").append(href);
-            sb.append("\" style=\"color:#1d4ed8;text-decoration:underline;margin-right:8px\">view logs</a>");
+            sb.append("<td align=\"left\">");
+            sb.append("<a href=\"").append(href).append("\">view logs</a>");
             if (!"unknown".equalsIgnoreCase(f.traceId)) {
-                sb.append("<a href=\"").append(kibanaUrl);
-                sb.append("\" target=\"_blank\" rel=\"noopener noreferrer\"");
-                sb.append(" style=\"color:#7c3aed;font-weight:bold;text-decoration:underline\"");
-                sb.append(" title=\"Kibana: ").append(kqlHint).append("\">Kibana</a>");
+                sb.append(" &nbsp;|&nbsp; <a href=\"").append(kibanaUrl);
+                sb.append("\" target=\"_blank\" title=\"Kibana: ").append(kqlHint).append("\">Kibana</a>");
             }
             sb.append("</td></tr>");
         }
 
         sb.append("</tbody></table>");
-        sb.append("<p class=\"meta\">Flow name → JSON log extract. Kibana opens Discover with KQL: ");
-        sb.append("<code>traceId:&lt;uuid&gt;</code> (set default data view to <code>weather-logs-test-*</code> or ");
-        sb.append("<code>weather-logs-*</code>). Kibana URL: <code>").append(escape(kibanaBase)).append("</code></p>");
+        sb.append("<p><font size=\"2\">Flow name opens per-test log file. ");
+        sb.append("Kibana: <a href=\"").append(htmlHrefAttr(kibanaBase + "/app/discover"));
+        sb.append("\" target=\"_blank\">").append(escape(kibanaBase)).append("</a> ");
+        sb.append("(KQL: <code>traceId:&lt;uuid&gt;</code>)</font></p>");
         sb.append("</body></html>");
         return sb.toString();
     }
@@ -312,89 +307,41 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         return url.replace("&", "&amp;");
     }
 
+    /** Legacy HTML header cell — survives Jenkins HTML Publisher sanitization. */
     private static String th(String label) {
-        return "<th style=\"" + TH_STYLE + "\">" + label + "</th>";
+        return "<th align=\"center\"><b>" + label + "</b></th>";
     }
 
-    private static String statusBadge(FlowRecord f) {
+    private static String statusCell(FlowRecord f) {
         if (f.failed > 0) {
-            return "<span style=\"" + BADGE_FAIL + "\">FAILED</span>";
+            return "<td bgcolor=\"#dc2626\" align=\"center\">"
+                    + "<font color=\"#ffffff\"><b>FAILED</b></font></td>";
         }
         if (f.skipped > 0) {
-            return "<span style=\"" + BADGE_SKIP + "\">SKIPPED</span>";
+            return "<td bgcolor=\"#ca8a04\" align=\"center\">"
+                    + "<font color=\"#ffffff\"><b>SKIPPED</b></font></td>";
         }
-        return "<span style=\"" + BADGE_PASS + "\">PASSED</span>";
+        return "<td bgcolor=\"#16a34a\" align=\"center\">"
+                + "<font color=\"#ffffff\"><b>PASSED</b></font></td>";
     }
 
+    /**
+     * Green / red / yellow blocks for Passed / Failed / Skipped counts (bgcolor + font).
+     */
     private static String resultCell(int value, String kind) {
         if (value > 0) {
-            String style = switch (kind) {
-                case "pass" -> CELL_PASS;
-                case "fail" -> CELL_FAIL;
-                case "skip" -> CELL_SKIP;
-                default -> TD_CENTER;
+            return switch (kind) {
+                case "pass" -> "<td bgcolor=\"#16a34a\" align=\"center\">"
+                        + "<font color=\"#ffffff\" size=\"3\"><b>" + value + "</b></font></td>";
+                case "fail" -> "<td bgcolor=\"#dc2626\" align=\"center\">"
+                        + "<font color=\"#ffffff\" size=\"3\"><b>" + value + "</b></font></td>";
+                case "skip" -> "<td bgcolor=\"#ca8a04\" align=\"center\">"
+                        + "<font color=\"#ffffff\" size=\"3\"><b>" + value + "</b></font></td>";
+                default -> "<td align=\"center\">" + value + "</td>";
             };
-            return "<td style=\"" + style + "\">" + value + "</td>";
         }
-        return "<td style=\"" + CELL_EMPTY + "\">0</td>";
+        return "<td bgcolor=\"#eeeeee\" align=\"center\"><font color=\"#888888\">0</font></td>";
     }
-
-    private static final String TABLE_STYLE =
-            "border-collapse:collapse;width:100%;border:3px solid #222;margin-top:12px";
-    private static final String TH_STYLE =
-            "border:2px solid #444;padding:10px 12px;background-color:#d4d4d4;font-weight:bold;text-align:center";
-    private static final String TD_CENTER =
-            "border:2px solid #444;padding:10px 12px;text-align:center;vertical-align:middle";
-    private static final String TD_LEFT =
-            "border:2px solid #444;padding:10px 12px;text-align:left;vertical-align:middle";
-    private static final String CELL_PASS =
-            "border:2px solid #14532d;padding:12px;text-align:center;vertical-align:middle;"
-                    + "background-color:#16a34a;color:#ffffff;font-weight:bold;font-size:16px";
-    private static final String CELL_FAIL =
-            "border:2px solid #7f1d1d;padding:12px;text-align:center;vertical-align:middle;"
-                    + "background-color:#dc2626;color:#ffffff;font-weight:bold;font-size:16px";
-    private static final String CELL_SKIP =
-            "border:2px solid #713f12;padding:12px;text-align:center;vertical-align:middle;"
-                    + "background-color:#ca8a04;color:#ffffff;font-weight:bold;font-size:16px";
-    private static final String CELL_EMPTY =
-            "border:2px solid #d1d5db;padding:10px 12px;text-align:center;vertical-align:middle;"
-                    + "background-color:#f3f4f6;color:#9ca3af";
-    private static final String BADGE_PASS =
-            "display:inline-block;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;"
-                    + "background-color:#16a34a;color:#fff;border:2px solid #14532d";
-    private static final String BADGE_FAIL =
-            "display:inline-block;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;"
-                    + "background-color:#dc2626;color:#fff;border:2px solid #7f1d1d";
-    private static final String BADGE_SKIP =
-            "display:inline-block;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;"
-                    + "background-color:#ca8a04;color:#fff;border:2px solid #713f12";
-
-    private static final String CSS = """
-            body{font-family:Segoe UI,system-ui,sans-serif;margin:1.5rem 2rem;color:#1a1a1a;background:#fafafa}
-            h1{font-size:1.5rem;border-bottom:3px solid #222;padding-bottom:.5rem;margin-bottom:.5rem}
-            .flow-table{border-collapse:collapse;width:100%;margin-top:1rem;border:3px solid #222;box-shadow:0 2px 8px rgba(0,0,0,.12)}
-            .flow-table th,.flow-table td{border:2px solid #444;padding:.65rem .9rem;text-align:center;vertical-align:middle}
-            .flow-table th{background:#d4d4d4;font-weight:700;color:#111}
-            .flow-table td.flow-name,.flow-table td.trace,.flow-table td.actions{text-align:left}
-            .flow-table tr.pass td.flow-name{background:#f0fdf4}
-            .flow-table tr.fail td.flow-name{background:#fef2f2}
-            .flow-table tr.skip td.flow-name{background:#fefce8}
-            .result-block{font-weight:700;font-size:1.05rem;min-width:3rem}
-            .block-pass{background:#16a34a!important;color:#fff!important;border:2px solid #14532d!important}
-            .block-fail{background:#dc2626!important;color:#fff!important;border:2px solid #7f1d1d!important}
-            .block-skip{background:#ca8a04!important;color:#fff!important;border:2px solid #713f12!important}
-            .block-empty{background:#f3f4f6;color:#9ca3af;border:2px solid #d1d5db!important}
-            .badge{display:inline-block;padding:.25rem .65rem;border-radius:4px;font-size:.75rem;font-weight:700;border:2px solid}
-            .badge-pass{background:#16a34a;color:#fff;border-color:#14532d}
-            .badge-fail{background:#dc2626;color:#fff;border-color:#7f1d1d}
-            .badge-skip{background:#ca8a04;color:#fff;border-color:#713f12}
-            .flow-link{font-weight:600;color:#1d4ed8;text-decoration:underline}
-            .action-link{color:#1d4ed8;text-decoration:underline;margin-right:.5rem}
-            .kibana-link{color:#7c3aed;font-weight:600}
-            .trace code{font-size:.78rem;word-break:break-all;background:#f3f4f6;padding:.15rem .35rem;border:1px solid #ccc}
-            .meta{color:#444;font-size:.9rem;margin:.75rem 0}
-            .pass{color:#16a34a;font-weight:700}.fail{color:#dc2626;font-weight:700}.skip{color:#ca8a04;font-weight:700}
-            """;
 
     private static String escape(String s) {
         if (s == null) {

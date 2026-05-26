@@ -15,25 +15,19 @@ if [ ! -f "$MAT" ] && [ ! -f "$REG" ]; then
   exit 0
 fi
 
-BODY_STYLE='font-family:Segoe UI,sans-serif;margin:24px;color:#111;background:#fafafa'
-H1_STYLE='border-bottom:3px solid #222;padding-bottom:8px'
-H2_STYLE='margin-top:28px;border-bottom:2px solid #666;padding-bottom:6px'
-
 {
   echo '<!DOCTYPE html><html><head><meta charset="utf-8"/>'
-  echo '<title>Flow Execution Report (combined)</title></head>'
-  echo "<body style=\"${BODY_STYLE}\">"
-  echo "<h1 style=\"${H1_STYLE}\">Flow Execution Report — combined</h1>"
+  echo '<title>Flow Execution Report (combined)</title></head><body>'
+  echo '<h1><b>Flow Execution Report — combined</b></h1>'
 
   if [ -f "$MAT" ]; then
-    echo "<h2 style=\"${H2_STYLE}\">MAT</h2>"
-    # Table rows include inline pass/fail cell styles from FlowExecutionListener
-    sed -n '/<table style=/,/<\/table>/p' "$MAT"
+    echo '<h2><b>MAT</b></h2>'
+    sed -n '/<table /,/<\/table>/p' "$MAT" | sed -n '1,/<\/table>/p'
   fi
 
   if [ -f "$REG" ]; then
-    echo "<h2 style=\"${H2_STYLE}\">Regression</h2>"
-    sed -n '/<table style=/,/<\/table>/p' "$REG"
+    echo '<h2><b>Regression</b></h2>'
+    sed -n '/<table /,/<\/table>/p' "$REG" | sed -n '1,/<\/table>/p'
   fi
 
   echo '</body></html>'
