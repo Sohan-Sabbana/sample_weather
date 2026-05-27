@@ -36,7 +36,7 @@ data:
   fluent-bit.conf: |
     [SERVICE]
         Flush         5
-        Daemon        On
+        Daemon        Off
         Log_Level     info
         Parsers_File  /fluent-bit/etc/parsers.conf
 
@@ -88,6 +88,13 @@ data:
         Match   kube.*
         Record  source pod
         Record  log_type app
+
+    # LogstashEncoder uses "message"; Kibana/ECS often expect "log". Keep_Log Off drops raw log.
+    [FILTER]
+        Name      modify
+        Match     kube.*
+        Condition Key_exists message
+        Copy      message log
 
     [OUTPUT]
         Name            es
