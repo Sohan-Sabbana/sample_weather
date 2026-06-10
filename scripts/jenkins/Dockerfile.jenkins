@@ -2,10 +2,10 @@ FROM jenkins/jenkins:lts-jdk17
 
 USER root
 
-# Install docker CLI, kubectl, maven, jq, curl
+# Install docker CLI, kubectl, maven, jq, curl, python3 (for the CD log analyzer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg lsb-release apt-transport-https \
-        jq maven git bash \
+        jq maven git bash python3 python3-venv python3-pip \
     && install -m 0755 -d /etc/apt/keyrings \
  \
     && curl -fsSL https://download.docker.com/linux/debian/gpg \
@@ -29,5 +29,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # On Docker Desktop the socket inside the container is owned by root:root
 # and gid 0, so adding jenkins to root group is the simplest path that works.
 RUN usermod -aG root jenkins
+
+# Install the CD log analyzer engine into an isolated venv and expose `cd-analyze`
+# on PATH. Pulling from Git keeps this image decoupled from the analyzer's source.
+# Bump CD_ANALYZER_REF (or use --build-arg) to pin/refresh the installed version.
+ARG CD_ANALYZER_REF=main
+RUN python3 -m venv /opt/cd-analyzer \
+    && /opt/cd-analyzer/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/cd-analyzer/bin/pip install --no-cache-dir \
+         "cd-log-analyzer-engine[llm] @ git+https://github.com/Sohan-Sabbana/CD-analyzer.git@${CD_ANALYZER_REF}"
+ENV PATH="/opt/cd-analyzer/bin:${PATH}"
 
 USER jenkins

@@ -167,6 +167,24 @@ pipeline {
                 reportTitles: 'Flow Execution Report'
             ])
         }
+        failure {
+            echo "[stage=analyze run=${RUN_ID}] build failed - running CD log analyzer"
+            // Triage the failure, collect only the evidence that matters, and write
+            // logs/analyzer/report.md + evidence.json. Never fail the post step.
+            sh '''
+                cd-analyze \
+                    --workspace "$WORKSPACE" \
+                    --job "$JOB_NAME" \
+                    --build "$BUILD_NUMBER" \
+                    --jenkins-url "$JENKINS_URL" \
+                    --console-log "$JENKINS_HOME/jobs/$JOB_NAME/builds/$BUILD_NUMBER/log" \
+                    --es-url "$ES_URL" \
+                    --es-index "weather-logs-*" \
+                    --kube-ns "$KUBE_NS" \
+                    --out-dir "$WORKSPACE/logs/analyzer" || true
+            '''
+            archiveArtifacts artifacts: 'logs/analyzer/**', allowEmptyArchive: true, fingerprint: true
+        }
         success {
             echo "Build succeeded. View logs in Kibana: http://localhost:5601"
         }
