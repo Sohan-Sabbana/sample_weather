@@ -78,7 +78,9 @@ pipeline {
                 sh '''
                     IMAGE="$(cat pushed-image.txt)"
                     kubectl apply -f k8s/00-namespaces.yaml
-                    sed "s|IMAGE_PLACEHOLDER|$IMAGE|g" k8s/app/deployment.yaml | kubectl apply -f -
+                    sed -e "s|IMAGE_PLACEHOLDER|$IMAGE|g" \
+                        -e "s|BUILD_PLACEHOLDER|${BUILD_NUMBER}|g" \
+                        k8s/app/deployment.yaml | kubectl apply -f -
                     kubectl apply -f k8s/app/service.yaml
                     kubectl -n "$KUBE_NS" rollout restart deployment/weather-api
                     kubectl -n "$KUBE_NS" rollout status  deployment/weather-api --timeout=180s

@@ -15,6 +15,10 @@ spec:
     metadata:
       labels:
         app: weather-api
+        # BUILD_PLACEHOLDER is rewritten by the Jenkins pipeline (sed) to the build
+        # number. The container reads it via fieldRef below so every pod log line
+        # carries build:<n>, letting the CD log analyzer join pod logs to test logs.
+        build: "BUILD_PLACEHOLDER"
         # Fluent Bit DaemonSet (k8s/logging/fluent-bit.yaml) tails pods in namespace weather.
       annotations:
         co.elastic.logs/enabled: "true"

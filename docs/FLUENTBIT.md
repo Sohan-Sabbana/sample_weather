@@ -8,6 +8,12 @@ Three log streams go to Elasticsearch:
 | **CD logs** | Jenkins build `log` files | Docker container | `weather-logs-cd-*` |
 | **Test logs** | `workspace/*/logs/tests-*.json` | Docker container | `weather-logs-test-*` |
 
+All three streams ship to the **same** Elasticsearch (Docker Desktop ES on
+`http://localhost:9200`). This is required so the CD log analyzer can join pod
+logs to test logs on `build` + `traceId`. Pod logs carry the real build number
+(the deploy step sets a `build` pod label) and `testName` (propagated from the
+`X-Test-Name` header into the server MDC).
+
 ## 1. Pod logs (Kubernetes)
 
 ```powershell
@@ -18,18 +24,24 @@ This deploys Elasticsearch + Kibana + **Fluent Bit DaemonSet** (`k8s/logging/flu
 
 - Tails `/var/log/containers/*.log` on each node
 - Keeps only namespace `weather`
-- Parses JSON from logback (`traceId`, `build`, `level`, …)
-- Writes to in-cluster ES → **http://localhost:30200**
+- Parses JSON from logback (`traceId`, `build`, `testName`, `level`, …)
+- Writes to the **Docker Desktop ES → http://localhost:9200** (default `ES_HOST`
+  in `k8s/logging/fluent-bit.yaml` is `host.docker.internal`), the same ES the
+  Jenkins pipeline, the analyzer, and Kibana use.
 
 Verify:
 
 ```powershell
 kubectl -n logging logs ds/fluent-bit --tail=40
 kubectl -n weather get pods
-curl http://localhost:30200/_cat/indices?v
+curl http://localhost:9200/_cat/indices?v
 ```
 
-Kibana (K8s): **http://localhost:30601** → index pattern `weather-logs-*`
+Kibana: **http://localhost:5601** → index pattern `weather-logs-*`
+
+> To use the in-cluster ES instead, set `ES_HOST=elasticsearch.logging.svc.cluster.local`
+> on the DaemonSet (and point Jenkins `ES_URL` + the analyzer at that cluster).
+> The default keeps everything in one place so correlation works out of the box.
 
 ## 2. Jenkins CD + test logs (Docker)
 
@@ -55,18 +67,18 @@ docker logs fluent-bit-jenkins --tail 30
 curl http://localhost:9200/_cat/indices?v
 ```
 
-### One Elasticsearch for everything
+### One Elasticsearch for everything (default)
 
-If you only want K8s ES (`30200`), point Fluent Bit Jenkins at it:
+By default everything lands in the Docker Desktop ES on `http://localhost:9200`:
 
-```powershell
-$env:ES_HOST = "host.docker.internal"
-$env:ES_PORT = "30200"
-# edit docker-compose.fluentbit.yml environment for fluent-bit service, then:
-docker compose -f docker-compose.fluentbit.yml up -d fluent-bit
-```
+- Pod logs: the K8s DaemonSet ships to `host.docker.internal:9200`.
+- CD + test logs: the Jenkins-side Fluent Bit / bulk script ship to `localhost:9200`.
+- The analyzer queries `ES_URL=http://host.docker.internal:9200`.
 
-Update Jenkins `ES_URL` in the Jenkinsfile to the same host/port.
+No extra steps are needed for correlation. If you prefer the in-cluster ES
+(`30200`) as the single store, flip `ES_HOST` on the DaemonSet to
+`elasticsearch.logging.svc.cluster.local` and set Jenkins `ES_URL` + the
+analyzer `--es-url` to `http://host.docker.internal:30200`.
 
 ## 3. Kibana queries
 

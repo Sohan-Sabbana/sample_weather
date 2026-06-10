@@ -25,9 +25,12 @@ public class TraceIdFilter extends OncePerRequestFilter {
 
     public static final String TRACE_ID_HEADER = "X-Trace-Id";
     public static final String SPAN_ID_HEADER = "X-Span-Id";
+    public static final String STAGE_HEADER = "X-Pipeline-Stage";
+    public static final String TEST_NAME_HEADER = "X-Test-Name";
     public static final String MDC_TRACE_ID = "traceId";
     public static final String MDC_SPAN_ID = "spanId";
     public static final String MDC_STAGE = "pipelineStage";
+    public static final String MDC_TEST_NAME = "testName";
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -35,11 +38,17 @@ public class TraceIdFilter extends OncePerRequestFilter {
                                     FilterChain chain) throws ServletException, IOException {
         String traceId = header(request, TRACE_ID_HEADER, () -> UUID.randomUUID().toString());
         String spanId  = header(request, SPAN_ID_HEADER,  () -> UUID.randomUUID().toString().substring(0, 8));
-        String stage   = header(request, "X-Pipeline-Stage", () -> "runtime");
+        String stage   = header(request, STAGE_HEADER, () -> "runtime");
+        // Set per-test by the TestNG suites; lets pod logs be filtered by test name,
+        // matching the testName the analyzer already reads from the test-side logs.
+        String testName = header(request, TEST_NAME_HEADER, () -> null);
 
         MDC.put(MDC_TRACE_ID, traceId);
         MDC.put(MDC_SPAN_ID, spanId);
         MDC.put(MDC_STAGE, stage);
+        if (testName != null) {
+            MDC.put(MDC_TEST_NAME, testName);
+        }
 
         response.setHeader(TRACE_ID_HEADER, traceId);
         response.setHeader(SPAN_ID_HEADER, spanId);
@@ -50,6 +59,7 @@ public class TraceIdFilter extends OncePerRequestFilter {
             MDC.remove(MDC_TRACE_ID);
             MDC.remove(MDC_SPAN_ID);
             MDC.remove(MDC_STAGE);
+            MDC.remove(MDC_TEST_NAME);
         }
     }
 

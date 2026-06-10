@@ -150,8 +150,14 @@ spec:
             - name: metrics
               containerPort: 2020
           env:
+            # Ship pod logs to the SAME Elasticsearch the Jenkins pipeline, the CD
+            # log analyzer, and Kibana use (Docker Desktop ES on the host). This
+            # keeps pod + test + CD logs in one cluster so they correlate by
+            # build/traceId. The DaemonSet runs with hostNetwork, so
+            # host.docker.internal resolves to the host. To use the in-cluster ES
+            # instead, set ES_HOST=elasticsearch.logging.svc.cluster.local.
             - name: ES_HOST
-              value: elasticsearch.logging.svc.cluster.local
+              value: host.docker.internal
             - name: ES_PORT
               value: "9200"
           resources:

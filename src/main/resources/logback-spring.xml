@@ -15,6 +15,7 @@
             <includeMdcKeyName>traceId</includeMdcKeyName>
             <includeMdcKeyName>spanId</includeMdcKeyName>
             <includeMdcKeyName>pipelineStage</includeMdcKeyName>
+            <includeMdcKeyName>testName</includeMdcKeyName>
             <customFields>{"service":"${appName}","version":"${appVersion}","env":"${ENV:-local}","build":"${BUILD_NUMBER:-local}"}</customFields>
             <fieldNames>
                 <timestamp>@timestamp</timestamp>
@@ -44,6 +45,7 @@
             <includeMdcKeyName>traceId</includeMdcKeyName>
             <includeMdcKeyName>spanId</includeMdcKeyName>
             <includeMdcKeyName>pipelineStage</includeMdcKeyName>
+            <includeMdcKeyName>testName</includeMdcKeyName>
             <customFields>{"service":"${appName}","version":"${appVersion}","env":"${ENV:-local}","build":"${BUILD_NUMBER:-local}"}</customFields>
             <fieldNames>
                 <timestamp>@timestamp</timestamp>
