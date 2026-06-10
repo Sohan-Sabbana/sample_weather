@@ -186,6 +186,26 @@ pipeline {
                     --out-dir "$WORKSPACE/logs/analyzer" || true
             '''
             archiveArtifacts artifacts: 'logs/analyzer/**', allowEmptyArchive: true, fingerprint: true
+            // Surface the one-line root cause directly on the build page.
+            script {
+                def desc = sh(
+                    script: '''jq -r '.analysis.suspected_cause // .analysis.root_cause // "see CD Failure Analysis report"' "$WORKSPACE/logs/analyzer/evidence.json" 2>/dev/null || echo "analyzer output unavailable"''',
+                    returnStdout: true
+                ).trim()
+                if (desc) {
+                    currentBuild.description = "CD failure: ${desc.take(180)}"
+                }
+            }
+            // Render the analyzer's HTML report in the Jenkins UI.
+            publishHTML(target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: 'logs/analyzer',
+                reportFiles: 'report.html',
+                reportName: 'CD Failure Analysis',
+                reportTitles: 'CD Failure Analysis'
+            ])
         }
         success {
             echo "Build succeeded. View logs in Kibana: http://localhost:5601"
