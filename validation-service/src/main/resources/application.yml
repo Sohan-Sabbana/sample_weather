@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: validation-service
+
+server:
+  port: ${SERVER_PORT:8081}
+
+app:
+  version: @project.version@
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    root: INFO
+    com.example.validation: INFO
+
+log:
+  file:
+    path: ${LOG_DIR:./logs}
+    name: validation-service.json

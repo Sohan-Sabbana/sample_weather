@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validation-service
+  namespace: weather
+  labels:
+    app: validation-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: validation-service
+  template:
+    metadata:
+      labels:
+        app: validation-service
+        # BUILD_PLACEHOLDER is rewritten by the Jenkins pipeline (sed) to the build
+        # number; the container reads it via fieldRef so downstream pod log lines
+        # also carry build:<n> for the analyzer's testName/build + traceId joins.
+        build: "BUILD_PLACEHOLDER"
+        # Fluent Bit DaemonSet (k8s/logging/fluent-bit.yaml) tails all pods in
+        # namespace weather, so validation-service logs reach ES with no extra config.
+      annotations:
+        co.elastic.logs/enabled: "true"
+        fluentbit.io/exclude: "false"
+    spec:
+      containers:
+        - name: validation-service
+          # VALIDATION_IMAGE_PLACEHOLDER is rewritten by the Jenkins pipeline using sed.
+          image: VALIDATION_IMAGE_PLACEHOLDER
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8081
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "k8s"
+            - name: ENV
+              value: "ci"
+            - name: BUILD_NUMBER
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['build']
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi

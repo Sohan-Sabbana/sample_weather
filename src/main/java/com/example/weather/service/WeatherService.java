@@ -22,14 +22,19 @@ public class WeatherService {
             List.of("Clear", "Partly cloudy", "Cloudy", "Light rain", "Thunderstorm", "Foggy", "Sunny");
 
     private final CityService cityService;
+    private final ValidationClient validationClient;
 
-    public WeatherService(CityService cityService) {
+    public WeatherService(CityService cityService, ValidationClient validationClient) {
         this.cityService = cityService;
+        this.validationClient = validationClient;
     }
 
     public WeatherReading current(String cityName) {
-        cityService.findByName(cityName)
+        var city = cityService.findByName(cityName)
                 .orElseThrow(() -> new NotFoundException("Unknown city: " + cityName));
+        // Fan out to the downstream validation-service (MS-2). Trace + test headers
+        // are forwarded automatically, so its pod logs correlate to this request.
+        validationClient.validateCity(city.getName(), city.getCountryCode());
         Random r = seeded(cityName, LocalDate.now().toString());
         WeatherReading reading = WeatherReading.builder()
                 .city(cityName)

@@ -30,6 +30,6 @@ kubectl -n logging get pods -l app=fluent-bit
 Write-Host @"
 
 Done. Pod logs from namespace 'weather' -> weather-logs-* on http://localhost:9200
-Kibana (Docker): http://localhost:5601 — create data views for weather-logs-* and weather-logs-test-*
+Kibana (Docker): http://localhost:5601 — create data views for weather-logs-* (and optional weather-logs-cd-*)
 
 "@

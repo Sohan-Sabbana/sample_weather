@@ -9,9 +9,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Test logs are no longer shipped to Elasticsearch (pod logs are the source of
+# truth), so no weather-logs-test-* data view is created.
 $views = @(
     @{ name = "Weather pod logs";   pattern = "weather-logs-*";      time = "@timestamp" },
-    @{ name = "Weather test logs";  pattern = "weather-logs-test-*"; time = "@timestamp" },
     @{ name = "Weather CD logs";    pattern = "weather-logs-cd-*";   time = "@timestamp" }
 )
 

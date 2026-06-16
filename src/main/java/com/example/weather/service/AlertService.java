@@ -19,6 +19,12 @@ public class AlertService {
     private final ConcurrentHashMap<Long, WeatherAlert> store = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong(0);
 
+    private final ValidationClient validationClient;
+
+    public AlertService(ValidationClient validationClient) {
+        this.validationClient = validationClient;
+    }
+
     public List<WeatherAlert> findAll() {
         log.info("Listing alerts count={}", store.size());
         return store.values().stream().sorted((a, b) -> Long.compare(a.getId(), b.getId())).toList();
@@ -34,6 +40,9 @@ public class AlertService {
     }
 
     public WeatherAlert create(WeatherAlert a) {
+        // Fan out to the downstream validation-service (MS-3); trace + test headers
+        // are forwarded so its pod logs join this request chain in Elasticsearch.
+        validationClient.validateAlert(a.getCity(), a.getType(), a.getSeverity());
         a.setId(ids.incrementAndGet());
         a.setRaisedAt(Instant.now());
         store.put(a.getId(), a);

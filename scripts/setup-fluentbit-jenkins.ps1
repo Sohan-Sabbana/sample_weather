@@ -21,7 +21,7 @@ try {
     Write-Host ""
     Write-Host "Fluent Bit is tailing:"
     Write-Host "  $JENKINS_HOME\jobs\*\builds\*\log          -> weather-logs-cd-*"
-    Write-Host "  $JENKINS_HOME\workspace\*\logs\*.json     -> weather-logs-test-*"
+    Write-Host "  (test JVM logs are kept as local Jenkins artifacts, not shipped to ES)"
     Write-Host ""
     Write-Host "Elasticsearch: http://localhost:9200"
     Write-Host "Kibana:        http://localhost:5601"

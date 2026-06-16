@@ -202,7 +202,6 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
             sb.append("    {\n");
             sb.append("      \"flowName\": \"").append(escape(f.flowName)).append("\",\n");
             sb.append("      \"className\": \"").append(escape(f.className)).append("\",\n");
-            sb.append("      \"traceId\": \"").append(escape(f.traceId)).append("\",\n");
             sb.append("      \"totalTests\": 1, \"passed\": ").append(f.passed)
                     .append(", \"failed\": ").append(f.failed)
                     .append(", \"skipped\": ").append(f.skipped).append(",\n");
@@ -242,7 +241,6 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         sb.append("<thead><tr bgcolor=\"#d4d4d4\">");
         sb.append(th("Flow Name"));
         sb.append(th("Status"));
-        sb.append(th("Trace ID"));
         sb.append(th("Total"));
         sb.append(th("Passed"));
         sb.append(th("Failed"));
@@ -252,25 +250,22 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
 
         for (FlowRecord f : FLOWS) {
             String href = htmlHrefAttr(logHref(f.logPath));
-            String kibanaUrl = htmlHrefAttr(kibanaDiscoverUrl(kibanaBase, f.traceId, build));
-            String kqlHint = escape(kibanaKql(f.traceId, build));
+            String kibanaUrl = htmlHrefAttr(kibanaDiscoverUrl(kibanaBase, f.flowName, build));
+            String kqlHint = escape(kibanaKql(f.flowName, build));
             String rowBg = f.failed > 0 ? "#fef2f2" : (f.skipped > 0 ? "#fefce8" : "#ffffff");
 
             sb.append("<tr bgcolor=\"").append(rowBg).append("\">");
             sb.append("<td align=\"left\"><a href=\"").append(href).append("\"><b>");
             sb.append(escape(f.flowName)).append("</b></a></td>");
             sb.append(statusCell(f));
-            sb.append("<td align=\"left\"><font size=\"2\">").append(escape(f.traceId)).append("</font></td>");
             sb.append("<td align=\"center\">1</td>");
             sb.append(resultCell(f.passed, "pass"));
             sb.append(resultCell(f.failed, "fail"));
             sb.append(resultCell(f.skipped, "skip"));
             sb.append("<td align=\"left\">");
             sb.append("<a href=\"").append(href).append("\">view logs</a>");
-            if (!"unknown".equalsIgnoreCase(f.traceId)) {
-                sb.append(" &nbsp;|&nbsp; <a href=\"").append(kibanaUrl);
-                sb.append("\" target=\"_blank\" title=\"Kibana: ").append(kqlHint).append("\">Kibana</a>");
-            }
+            sb.append(" &nbsp;|&nbsp; <a href=\"").append(kibanaUrl);
+            sb.append("\" target=\"_blank\" title=\"Kibana: ").append(kqlHint).append("\">Kibana</a>");
             sb.append("</td></tr>");
         }
 
@@ -278,7 +273,7 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
         sb.append("<p><font size=\"2\">Flow name opens per-test log file. ");
         sb.append("Kibana: <a href=\"").append(htmlHrefAttr(kibanaBase + "/app/discover"));
         sb.append("\" target=\"_blank\">").append(escape(kibanaBase)).append("</a> ");
-        sb.append("(KQL: <code>traceId:&lt;uuid&gt;</code>)</font></p>");
+        sb.append("(KQL: <code>build:&lt;n&gt; AND testName:&lt;name&gt;</code>)</font></p>");
         sb.append("</body></html>");
         return sb.toString();
     }
@@ -286,19 +281,21 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
     /**
      * Kibana 8 Discover deep link. KQL uses unquoted values (no {@code "} in the URL) so the HTML
      * {@code href} attribute is not truncated — that was why the link looked dead before.
+     * Pods carry {@code testName} (from the {@code X-Test-Name} header) and {@code build}, so the
+     * link correlates a flow to its pod logs without exposing traceId in the report.
      */
-    private static String kibanaDiscoverUrl(String kibanaBase, String traceId, String build) {
-        String kql = kibanaKql(traceId, build);
+    private static String kibanaDiscoverUrl(String kibanaBase, String testName, String build) {
+        String kql = kibanaKql(testName, build);
         return kibanaBase + "/app/discover#/?_g=(time:(from:now-7d,to:now))"
                 + "&_a=(query:(language:kuery,query:'" + kql + "'))";
     }
 
-    private static String kibanaKql(String traceId, String build) {
+    private static String kibanaKql(String testName, String build) {
         StringBuilder kql = new StringBuilder();
         if (build != null && !build.isBlank() && !"local".equals(build)) {
             kql.append("build:").append(build).append(" AND ");
         }
-        kql.append("traceId:").append(traceId);
+        kql.append("testName:").append(testName);
         return kql.toString();
     }
 

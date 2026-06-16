@@ -67,8 +67,8 @@ This installs into your cluster:
 
 Wait until both pods are `Ready`, then open Kibana:
 **http://localhost:30601** → Stack Management → Index Patterns → create
-- `weather-logs-*`       (pod logs)
-- `weather-logs-test-*`  (test JVM logs)
+- `weather-logs-*`       (pod logs - the source of truth)
+- `weather-logs-cd-*`    (optional Jenkins console logs)
 
 ---
 
@@ -171,9 +171,10 @@ weather-api/
 │   ├── WeatherApiApplication.java
 │   ├── config/
 │   │   ├── OpenApiConfig.java
-│   │   └── TraceIdFilter.java           <-- X-Trace-Id -> MDC -> log JSON
-│   ├── controller/                      <-- 14 REST endpoints
-│   ├── service/
+│   │   ├── DownstreamClientConfig.java  <-- RestTemplate forwards trace+test headers
+│   │   └── TraceIdFilter.java           <-- X-Trace-Id/X-Test-Name -> MDC -> log JSON
+│   ├── controller/                      <-- REST endpoints
+│   ├── service/                         <-- incl. ValidationClient (calls MS-2/MS-3)
 │   ├── model/
 │   └── exception/
 ├── src/main/resources/
@@ -184,18 +185,23 @@ weather-api/
 │   ├── mat/MatSmokeTests.java
 │   └── regression/{City,Weather,Alert}RegressionTests.java
 ├── src/test/resources/logback-test.xml
+├── validation-service/                  <-- downstream MS-2/MS-3 (Spring Boot)
+│   ├── pom.xml
+│   ├── Dockerfile
+│   └── src/main/...                     <-- /api/validate/{city,alert}, same log JSON
 ├── k8s/
 │   ├── 00-namespaces.yaml
 │   ├── app/
 │   │   ├── deployment.yaml              <-- IMAGE_PLACEHOLDER, probes, labels
-│   │   └── service.yaml                 <-- NodePort 30080
+│   │   ├── service.yaml                 <-- NodePort 30080
+│   │   ├── validation-deployment.yaml   <-- VALIDATION_IMAGE_PLACEHOLDER
+│   │   └── validation-service.yaml      <-- ClusterIP 8081 (internal)
 │   └── logging/
 │       ├── elasticsearch.yaml           <-- single-node, NodePort 30200
 │       ├── kibana.yaml                  <-- NodePort 30601
 │       └── filebeat.yaml                <-- DaemonSet + RBAC + autodiscover
 └── scripts/
     ├── setup-logging.ps1                <-- installs ES + Kibana + Filebeat
-    ├── ship-test-logs-to-es.sh          <-- bulk POST test logs to ES
     └── jenkins/
         ├── Dockerfile.jenkins           <-- Jenkins + docker + kubectl + mvn
         └── run-jenkins.ps1              <-- builds & runs the Jenkins container

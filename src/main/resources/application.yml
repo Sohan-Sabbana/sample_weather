@@ -25,6 +25,14 @@ management:
     health:
       show-details: always
 
+# Downstream validation-service (MS-2/MS-3). In k8s this resolves via cluster DNS
+# inside namespace weather; override VALIDATION_SERVICE_URL for local runs, or set
+# VALIDATION_SERVICE_ENABLED=false to skip the fan-out entirely.
+validation:
+  service:
+    url: ${VALIDATION_SERVICE_URL:http://validation-service:8081}
+    enabled: ${VALIDATION_SERVICE_ENABLED:true}
+
 logging:
   level:
     root: INFO

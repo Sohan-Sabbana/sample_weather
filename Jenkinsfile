@@ -11,6 +11,8 @@ pipeline {
     parameters {
         string(name: 'DOCKERHUB_USER', defaultValue: 'sparebuddy',
                description: 'Your Docker Hub username (also the image namespace).')
+        booleanParam(name: 'MASTER_CD', defaultValue: true,
+               description: 'Master CD path: deploy to the cluster (pods -> Fluent Bit -> ES) and run MAT/regression. Turn off on feature branches to build + push images only, keeping Elasticsearch free of non-master pod logs.')
     }
 
     tools {
@@ -21,6 +23,8 @@ pipeline {
         IMAGE_NAME   = "${params.DOCKERHUB_USER}/weather-api"
         IMAGE_TAG    = "${env.BUILD_NUMBER}"
         IMAGE        = "${IMAGE_NAME}:${IMAGE_TAG}"
+        VALIDATION_IMAGE_NAME = "${params.DOCKERHUB_USER}/validation-service"
+        VALIDATION_IMAGE      = "${VALIDATION_IMAGE_NAME}:${IMAGE_TAG}"
         RUN_ID       = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
         APP_BASE_URL = "http://host.docker.internal:30080"
         ES_URL       = "http://host.docker.internal:9200"
@@ -61,23 +65,46 @@ pipeline {
                         # Image namespace must match the logged-in Docker Hub user.
                         export IMAGE_NAME="${DH_USER}/weather-api"
                         export IMAGE="${IMAGE_NAME}:${BUILD_NUMBER}"
-                        echo "[stage=docker run=${RUN_ID}] building ${IMAGE}"
+                        export VAL_IMAGE_NAME="${DH_USER}/validation-service"
+                        export VAL_IMAGE="${VAL_IMAGE_NAME}:${BUILD_NUMBER}"
+                        echo "[stage=docker run=${RUN_ID}] building ${IMAGE} and ${VAL_IMAGE}"
                         echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+
+                        # weather-api (MS-1)
                         docker build -t "$IMAGE" -t "$IMAGE_NAME:latest" .
                         docker push "$IMAGE"
                         docker push "$IMAGE_NAME:latest"
                         echo "$IMAGE" > pushed-image.txt
+
+                        # validation-service (MS-2/MS-3)
+                        docker build -t "$VAL_IMAGE" -t "$VAL_IMAGE_NAME:latest" validation-service
+                        docker push "$VAL_IMAGE"
+                        docker push "$VAL_IMAGE_NAME:latest"
+                        echo "$VAL_IMAGE" > pushed-validation-image.txt
                     '''
                 }
             }
         }
 
         stage('Deploy to Kubernetes') {
+            when { expression { return isMasterCd() } }
             steps {
                 echo "[stage=deploy run=${RUN_ID}] kubectl apply -> ${KUBE_NS}"
                 sh '''
                     IMAGE="$(cat pushed-image.txt)"
+                    VAL_IMAGE="$(cat pushed-validation-image.txt)"
                     kubectl apply -f k8s/00-namespaces.yaml
+
+                    # Deploy the downstream validation-service (MS-2/MS-3) first so
+                    # weather-api's fan-out calls have something to reach.
+                    sed -e "s|VALIDATION_IMAGE_PLACEHOLDER|$VAL_IMAGE|g" \
+                        -e "s|BUILD_PLACEHOLDER|${BUILD_NUMBER}|g" \
+                        k8s/app/validation-deployment.yaml | kubectl apply -f -
+                    kubectl apply -f k8s/app/validation-service.yaml
+                    kubectl -n "$KUBE_NS" rollout restart deployment/validation-service
+                    kubectl -n "$KUBE_NS" rollout status  deployment/validation-service --timeout=180s
+
+                    # Deploy weather-api (MS-1)
                     sed -e "s|IMAGE_PLACEHOLDER|$IMAGE|g" \
                         -e "s|BUILD_PLACEHOLDER|${BUILD_NUMBER}|g" \
                         k8s/app/deployment.yaml | kubectl apply -f -
@@ -89,6 +116,7 @@ pipeline {
         }
 
         stage('Wait for endpoint') {
+            when { expression { return isMasterCd() } }
             steps {
                 sh '''
                     echo "Waiting for $APP_BASE_URL/api/health ..."
@@ -104,6 +132,7 @@ pipeline {
         }
 
         stage('MAT') {
+            when { expression { return isMasterCd() } }
             steps {
                 echo "[stage=mat run=${RUN_ID}] running Minimum Acceptance Tests"
                 sh '''
@@ -120,13 +149,14 @@ pipeline {
             post {
                 always {
                     junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
-                    sh 'bash scripts/ship-test-logs-to-es.sh "$LOG_DIR/tests-mat.json" mat || true'
+                    // Test JVM logs stay as local artifacts only; Elasticsearch holds pod logs.
                     archiveArtifacts artifacts: 'logs/flow-execution-report-mat.html, logs/flows/**', allowEmptyArchive: true, fingerprint: true
                 }
             }
         }
 
         stage('Regression') {
+            when { expression { return isMasterCd() } }
             steps {
                 echo "[stage=regression run=${RUN_ID}] running regression suite"
                 sh '''
@@ -143,7 +173,7 @@ pipeline {
             post {
                 always {
                     junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
-                    sh 'bash scripts/ship-test-logs-to-es.sh "$LOG_DIR/tests-regression.json" regression || true'
+                    // Test JVM logs stay as local artifacts only; Elasticsearch holds pod logs.
                     archiveArtifacts artifacts: 'logs/flow-execution-report-regression.html, logs/flows/**', allowEmptyArchive: true, fingerprint: true
                 }
             }
@@ -156,6 +186,7 @@ pipeline {
             sh '''
                 kubectl -n "$KUBE_NS" get pods -o wide || true
                 kubectl -n "$KUBE_NS" logs -l app=weather-api --tail=50 || true
+                kubectl -n "$KUBE_NS" logs -l app=validation-service --tail=50 || true
                 bash scripts/prepare-flow-report-for-jenkins.sh || true
             '''
             archiveArtifacts artifacts: 'logs/**/*.json, logs/**/*.log, logs/flow-execution-report*.html, logs/flows/**, logs/flow-report/**', allowEmptyArchive: true, fingerprint: true
@@ -211,4 +242,15 @@ pipeline {
             echo "Build succeeded. View logs in Kibana: http://localhost:5601"
         }
     }
+}
+
+// Master CD path = the MASTER_CD param is on AND, for multibranch jobs, the branch
+// is a master/main CD branch. Single-pipeline jobs (no BRANCH_NAME) honour the param
+// alone. Only this path deploys to the cluster, so only master pod logs reach ES.
+boolean isMasterCd() {
+    if (!params.MASTER_CD) {
+        return false
+    }
+    def branch = env.BRANCH_NAME
+    return branch == null || branch ==~ /(?i)(master|master-cd|main)/
 }
