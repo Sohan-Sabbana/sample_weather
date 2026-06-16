@@ -143,7 +143,7 @@ pipeline {
             post {
                 always {
                     junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
-                    // Test JVM logs stay as local artifacts only; Elasticsearch holds pod logs.
+                    sh 'bash scripts/ship-test-logs-to-es.sh "$LOG_DIR/tests-mat.json" mat || true'
                     archiveArtifacts artifacts: 'logs/flow-execution-report-mat.html, logs/flows/**', allowEmptyArchive: true, fingerprint: true
                 }
             }
@@ -167,7 +167,7 @@ pipeline {
             post {
                 always {
                     junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
-                    // Test JVM logs stay as local artifacts only; Elasticsearch holds pod logs.
+                    sh 'bash scripts/ship-test-logs-to-es.sh "$LOG_DIR/tests-regression.json" regression || true'
                     archiveArtifacts artifacts: 'logs/flow-execution-report-regression.html, logs/flows/**', allowEmptyArchive: true, fingerprint: true
                 }
             }
@@ -234,7 +234,8 @@ pipeline {
             ])
         }
         success {
-            echo "Build succeeded. View logs in Kibana: http://localhost:5601"
+            echo "Build succeeded. Pod logs: Kibana Discover -> data view 'Weather pod logs' (weather-logs-*). Test logs: 'Weather test logs'."
+            echo "Open http://localhost:5601/app/discover — time range Last 24 hours, filter e.g. build:${env.BUILD_NUMBER}"
         }
     }
 }

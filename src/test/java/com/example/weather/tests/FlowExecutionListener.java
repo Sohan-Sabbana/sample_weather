@@ -271,23 +271,26 @@ public class FlowExecutionListener implements ISuiteListener, IInvokedMethodList
 
         sb.append("</tbody></table>");
         sb.append("<p><font size=\"2\">Flow name opens per-test log file. ");
-        sb.append("Kibana: <a href=\"").append(htmlHrefAttr(kibanaBase + "/app/discover"));
+        sb.append("Kibana: <a href=\"").append(htmlHrefAttr(kibanaBase + "/app/discover#/?_g=(time:(from:now-7d,to:now))&_a=(dataSource:(dataViewId:'"
+                + System.getProperty("kibana.pod.dataview.id", "d3945f8a-8770-4068-8b12-d50dbf15f654")
+                + "',type:dataView),query:(language:kuery,query:'build:" + escape(build) + "')))"));
         sb.append("\" target=\"_blank\">").append(escape(kibanaBase)).append("</a> ");
-        sb.append("(KQL: <code>build:&lt;n&gt; AND testName:&lt;name&gt;</code>)</font></p>");
+        sb.append("(KQL on <b>Weather pod logs</b>: <code>build:&lt;n&gt; AND testName:&lt;name&gt;</code>)</font></p>");
         sb.append("</body></html>");
         return sb.toString();
     }
 
     /**
-     * Kibana 8 Discover deep link. KQL uses unquoted values (no {@code "} in the URL) so the HTML
-     * {@code href} attribute is not truncated — that was why the link looked dead before.
-     * Pods carry {@code testName} (from the {@code X-Test-Name} header) and {@code build}, so the
-     * link correlates a flow to its pod logs without exposing traceId in the report.
+     * Kibana 8 Discover deep link targeting the pod-log data view (weather-logs-*).
+     * Without dataViewId, Discover often stays on weather-logs-test-* which is empty.
      */
     private static String kibanaDiscoverUrl(String kibanaBase, String testName, String build) {
         String kql = kibanaKql(testName, build);
+        String dataViewId = System.getProperty(
+                "kibana.pod.dataview.id", "d3945f8a-8770-4068-8b12-d50dbf15f654");
         return kibanaBase + "/app/discover#/?_g=(time:(from:now-7d,to:now))"
-                + "&_a=(query:(language:kuery,query:'" + kql + "'))";
+                + "&_a=(dataSource:(dataViewId:'" + dataViewId + "',type:dataView)"
+                + ",query:(language:kuery,query:'" + kql + "'))";
     }
 
     private static String kibanaKql(String testName, String build) {
