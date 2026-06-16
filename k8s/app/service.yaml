@@ -13,7 +13,6 @@ spec:
     - name: http
       port: 8080
       targetPort: http
-      # Docker Desktop forwards NodePort to localhost, so tests can hit
-      # http://localhost:30080 (or http://host.docker.internal:30080 from
-      # inside a container).
+      # Docker Desktop (legacy) forwarded NodePort to localhost:30080.
+      # desktop-control-plane / kind clusters: use scripts/k8s-port-forward.sh from Jenkins.
       nodePort: 30080

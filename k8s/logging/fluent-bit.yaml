@@ -45,7 +45,7 @@ data:
         Tag               kube.*
         Path              /var/log/containers/*.log
         Exclude_Path      /var/log/containers/*_logging_*.log,/var/log/containers/*_kube-system_*.log
-        Parser            docker
+        Parser            cri
         DB                /var/lib/fluent-bit/flb_kube.db
         Mem_Buf_Limit     10MB
         Skip_Long_Lines   On
@@ -109,6 +109,14 @@ data:
         tls             Off
 
   parsers.conf: |
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<log>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+        Time_Keep   On
+
     [PARSER]
         Name        docker
         Format      json

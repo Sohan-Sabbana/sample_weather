@@ -26,7 +26,7 @@ pipeline {
         VALIDATION_IMAGE_NAME = "${params.DOCKERHUB_USER}/validation-service"
         VALIDATION_IMAGE      = "${VALIDATION_IMAGE_NAME}:${IMAGE_TAG}"
         RUN_ID       = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
-        APP_BASE_URL = "http://host.docker.internal:30080"
+        APP_BASE_URL = "http://127.0.0.1:30080"
         ES_URL       = "http://host.docker.internal:9200"
         LOG_DIR      = "${env.WORKSPACE}/logs"
         ENV          = "ci"
@@ -111,6 +111,9 @@ pipeline {
                     kubectl apply -f k8s/app/service.yaml
                     kubectl -n "$KUBE_NS" rollout restart deployment/weather-api
                     kubectl -n "$KUBE_NS" rollout status  deployment/weather-api --timeout=180s
+
+                    # Ship pod logs (weather-api + validation-service) to Docker ES.
+                    bash scripts/ensure-fluentbit-k8s.sh
                 '''
             }
         }
@@ -118,16 +121,7 @@ pipeline {
         stage('Wait for endpoint') {
             when { expression { return isMasterCd() } }
             steps {
-                sh '''
-                    echo "Waiting for $APP_BASE_URL/api/health ..."
-                    for i in $(seq 1 60); do
-                        if curl -fsS "$APP_BASE_URL/api/health" >/dev/null; then
-                            echo "App is reachable after ${i}s"; exit 0
-                        fi
-                        sleep 2
-                    done
-                    echo "App not reachable"; kubectl -n "$KUBE_NS" get pods; exit 1
-                '''
+                sh 'bash scripts/k8s-port-forward.sh start'
             }
         }
 
@@ -187,6 +181,7 @@ pipeline {
                 kubectl -n "$KUBE_NS" get pods -o wide || true
                 kubectl -n "$KUBE_NS" logs -l app=weather-api --tail=50 || true
                 kubectl -n "$KUBE_NS" logs -l app=validation-service --tail=50 || true
+                bash scripts/k8s-port-forward.sh stop || true
                 bash scripts/prepare-flow-report-for-jenkins.sh || true
             '''
             archiveArtifacts artifacts: 'logs/**/*.json, logs/**/*.log, logs/flow-execution-report*.html, logs/flows/**, logs/flow-report/**', allowEmptyArchive: true, fingerprint: true
