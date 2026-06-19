@@ -48,17 +48,4 @@ public class AlertRegressionTests extends BaseApiTest {
     public void deleteMissingAlertReturns404() {
         given().spec(spec).when().delete("/api/alerts/99999").then().statusCode(404);
     }
-
-    /** Intentional failure for CD analyzer e2e: triggers MS-3 validation-service WARN in ES. */
-    @Test
-    public void demoAnalyzerFailure_ms3ValidationWarn() {
-        Map<String, Object> alert = Map.of(
-                "city", "Bengaluru",
-                "type", "STORM",
-                "severity", "CRITICAL",
-                "message", "E2E demo - invalid severity for validation-service WARN");
-        given().spec(spec).body(alert)
-                .when().post("/api/alerts")
-                .then().statusCode(400);
-    }
 }
