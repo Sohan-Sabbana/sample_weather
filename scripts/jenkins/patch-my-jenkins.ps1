@@ -42,4 +42,8 @@ docker exec -u jenkins $CONTAINER docker version --format "docker client {{.Clie
 docker exec jenkins bash -c "cat /proc/1/status | grep '^Groups:'"
 
 Write-Host ""
+Write-Host "Installing CD log analyzer (cd-analyze) ..."
+powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\install-cd-analyzer.ps1"
+
+Write-Host ""
 Write-Host "Done. Re-run the weather build."
