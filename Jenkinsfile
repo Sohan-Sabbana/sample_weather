@@ -130,6 +130,10 @@ pipeline {
             steps {
                 echo "[stage=mat run=${RUN_ID}] running Minimum Acceptance Tests"
                 sh '''
+                    rm -f "$LOG_DIR/flow-execution-report-mat.json" \
+                          "$LOG_DIR/flow-execution-report-mat.html" \
+                          "$LOG_DIR/tests-mat.json"
+                    rm -rf "$LOG_DIR/flows"
                     mvn -B -ntp -Pmat test \
                         -Dapi.base.url="$APP_BASE_URL" \
                         -Dtest.stage=mat \
@@ -154,6 +158,10 @@ pipeline {
             steps {
                 echo "[stage=regression run=${RUN_ID}] running regression suite"
                 sh '''
+                    rm -f "$LOG_DIR/flow-execution-report-regression.json" \
+                          "$LOG_DIR/flow-execution-report-regression.html" \
+                          "$LOG_DIR/tests-regression.json"
+                    rm -rf "$LOG_DIR/flows"
                     mvn -B -ntp -Pregression test \
                         -Dapi.base.url="$APP_BASE_URL" \
                         -Dtest.stage=regression \
@@ -184,7 +192,7 @@ pipeline {
                 bash scripts/k8s-port-forward.sh stop || true
                 bash scripts/prepare-flow-report-for-jenkins.sh || true
             '''
-            archiveArtifacts artifacts: 'logs/**/*.json, logs/**/*.log, logs/flow-execution-report*.html, logs/flows/**, logs/flow-report/**', allowEmptyArchive: true, fingerprint: true
+            archiveArtifacts artifacts: 'logs/**/*.json, logs/**/*.log, logs/flow-execution-report*.html, logs/flows/**, logs/flow-report/**, target/surefire-reports/*.xml', allowEmptyArchive: true, fingerprint: true
             publishHTML(target: [
                 allowMissing: true,
                 alwaysLinkToLastBuild: true,
@@ -209,6 +217,7 @@ pipeline {
                     --es-url "$ES_URL" \
                     --es-index "weather-logs-*" \
                     --kube-ns "$KUBE_NS" \
+                    --kube-selector "app=weather-api,app=validation-service" \
                     --out-dir "$WORKSPACE/logs/analyzer" || true
             '''
             archiveArtifacts artifacts: 'logs/analyzer/**', allowEmptyArchive: true, fingerprint: true

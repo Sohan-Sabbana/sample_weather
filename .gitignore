@@ -10,3 +10,7 @@ logs/
 .settings/
 .app.pid
 .DS_Store
+
+# Local Jenkins API credentials (never commit)
+scripts/jenkins/jenkins.local.env
+**/*.local.env
