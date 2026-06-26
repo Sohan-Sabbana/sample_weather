@@ -87,13 +87,62 @@ Archived artifacts must include flow reports, flow logs, and Surefire XML (see `
 2. Open the build → **CD Failure Analysis** (left sidebar).
 3. Build description shows a one-line root cause when `evidence.json` is produced.
 
-## Optional LLM analysis
+## Optional LLM analysis (plug-and-play providers)
 
-Inside the Jenkins container (or host):
+The analyzer uses a **registry of LLM providers** — add a backend in CD-analyzer
+without changing the Jenkins pipeline. Built-in providers: `groq`, `openai`.
 
-```bash
-export ANALYZER_LLM_API_KEY=sk-...
-export ANALYZER_LLM_MODEL=gpt-4o-mini
+### Jenkins (automatic on failure)
+
+1. Create a Groq API key at [console.groq.com](https://console.groq.com).
+2. **Manage Jenkins → Credentials → Global → Add Credentials**
+   - Kind: **Secret text**
+   - ID: `groq-api-key` (must match `Jenkinsfile`)
+   - Secret: your Groq API key
+3. On the next **failed** build, `cd-analyze` runs with:
+   - `ANALYZER_LLM_PROVIDER=groq`
+   - `ANALYZER_LLM_MODEL=llama-3.3-70b-versatile`
+
+To switch to OpenAI later, change the `export` lines in `Jenkinsfile` to
+`ANALYZER_LLM_PROVIDER=openai` and store the key under the same credential ID
+(or a new one).
+
+**When the LLM runs:** only when rule-based confidence is **below 0.6** (e.g.
+`validation-service` rule at 0.55). Set `ANALYZER_LLM_FORCE=1` to test Groq
+even on confident rule matches. The LLM only sees the capped evidence packet (~8 KB).
+
+### Local / off-agent test
+
+```powershell
+$env:ANALYZER_LLM_PROVIDER = "groq"
+$env:GROQ_API_KEY = "gsk_..."   # or ANALYZER_LLM_API_KEY
+$env:ANALYZER_LLM_FORCE = "1"   # optional: force LLM on confident rules
+
+docker exec -u jenkins -e ANALYZER_LLM_PROVIDER -e GROQ_API_KEY -e ANALYZER_LLM_FORCE jenkins cd-analyze `
+  --workspace /var/jenkins_home/workspace/weather `
+  --job weather --build 27 `
+  --console-log /var/jenkins_home/jobs/weather/builds/27/log `
+  --es-url http://host.docker.internal:9200 `
+  --kube-ns weather `
+  --kube-selector "app=weather-api,app=validation-service" `
+  --out-dir /tmp/analyzer-llm-smoke --print
 ```
 
-The LLM only runs when rule-based confidence is low, and only sees the capped evidence packet (~8 KB).
+List registered components (including `llm_providers`):
+
+```powershell
+docker exec jenkins cd-analyze --list
+```
+
+## Branch / deploy notes
+
+Until you merge to `main`:
+
+1. Point the Jenkins job at `feature/cd-analyzer-integration` (multibranch scan or branch filter).
+2. Reinstall the engine from the feature branch:
+   ```powershell
+   $env:CD_ANALYZER_REF = "feature/jenkins-remote-poll"
+   powershell -ExecutionPolicy Bypass -File .\scripts\jenkins\install-cd-analyzer.ps1
+   ```
+3. After merge, reinstall with `CD_ANALYZER_REF=main`.
+

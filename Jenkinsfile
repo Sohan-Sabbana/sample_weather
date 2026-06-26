@@ -207,19 +207,24 @@ pipeline {
             echo "[stage=analyze run=${RUN_ID}] build failed - running CD log analyzer"
             // Triage the failure, collect only the evidence that matters, and write
             // logs/analyzer/report.md + evidence.json. Never fail the post step.
-            sh '''
-                cd-analyze \
-                    --workspace "$WORKSPACE" \
-                    --job "$JOB_NAME" \
-                    --build "$BUILD_NUMBER" \
-                    --jenkins-url "$JENKINS_URL" \
-                    --console-log "$JENKINS_HOME/jobs/$JOB_NAME/builds/$BUILD_NUMBER/log" \
-                    --es-url "$ES_URL" \
-                    --es-index "weather-logs-*" \
-                    --kube-ns "$KUBE_NS" \
-                    --kube-selector "app=weather-api,app=validation-service" \
-                    --out-dir "$WORKSPACE/logs/analyzer" || true
-            '''
+            // LLM: plug-and-play Groq provider (swap ANALYZER_LLM_PROVIDER=openai later).
+            withCredentials([string(credentialsId: 'groq-api-key', variable: 'ANALYZER_LLM_API_KEY')]) {
+                sh '''
+                    export ANALYZER_LLM_PROVIDER=groq
+                    export ANALYZER_LLM_MODEL=llama-3.3-70b-versatile
+                    cd-analyze \
+                        --workspace "$WORKSPACE" \
+                        --job "$JOB_NAME" \
+                        --build "$BUILD_NUMBER" \
+                        --jenkins-url "$JENKINS_URL" \
+                        --console-log "$JENKINS_HOME/jobs/$JOB_NAME/builds/$BUILD_NUMBER/log" \
+                        --es-url "$ES_URL" \
+                        --es-index "weather-logs-*" \
+                        --kube-ns "$KUBE_NS" \
+                        --kube-selector "app=weather-api,app=validation-service" \
+                        --out-dir "$WORKSPACE/logs/analyzer" || true
+                '''
+            }
             archiveArtifacts artifacts: 'logs/analyzer/**', allowEmptyArchive: true, fingerprint: true
             // Surface the one-line root cause directly on the build page.
             script {
